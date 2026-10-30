@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+pop/
+dead/
+net_pop/
+net_dead/
+spores/
+corpus.txt
+*.jsonl
+report.md
+net_report.md

@@ -12,7 +12,8 @@ interior become boundary as you look closer, so new territory opens up
 mid-run and the population can colonise it. That is the fractal lesson: every
 zoom reveals the same shape, and a new place to live.
 
-Population is held at an optimum K by logistic selection, not a hard cap.
+Population is held near an optimum K by truncation selection: K / mean brood
+survivors, ranked by energy, so the next generation lands near K.
 
 Genome: strategy (code), cr/ci (habitat), mu (copy fidelity), eff (metabolism),
 brood (children), diet (hunger). Predators eat neighbours' energy and code.
@@ -30,6 +31,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+try:
+    import resource
+except ImportError:                 # Windows: no rlimits, only the timeout
+    resource = None
 
 ROOT = Path(__file__).resolve().parent
 POP = ROOT / "pop"
@@ -49,6 +55,8 @@ HUNT_COST = 4
 HUNT_SHARE = 0.45
 MAXITER_0 = 60
 MAXITER_STEP = 3
+KIN_DEPTH = 2      # kin = share a parent or grandparent; the whole tree is one family
+MEM_LIMIT = 512 * 2 ** 20   # address space per organism: overreach is MemoryError, i.e. death
 
 CASES = [
     [2, 4, 6],
@@ -266,12 +274,28 @@ def save_genome(path, g):
                     encoding="utf-8")
 
 
+def cage():
+    """Runs in the child before exec. The timeout bounds time; this bounds memory,
+    so `c*10**9` dies of MemoryError instead of taking the host down with it."""
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT, MEM_LIMIT))
+    except (ValueError, OSError):
+        pass                        # macOS does not enforce RLIMIT_AS
+
+
+def kin(a, b):
+    """Share an ancestor within KIN_DEPTH generations, self included."""
+    n = KIN_DEPTH + 1
+    return bool(set(a.get("lineage", [])[-n:]) & set(b.get("lineage", [])[-n:]))
+
+
 def run_organism(path, args=None, stdin=None):
     try:
         p = subprocess.run([sys.executable, "-I", str(path)] + (args or []),
                            input=stdin, capture_output=True, text=True,
                            timeout=TIME_LIMIT, cwd=str(path.parent),
-                           env={"PATH": "/usr/bin:/bin"})
+                           env={"PATH": "/usr/bin:/bin"},
+                           preexec_fn=cage if resource else None)
         if p.returncode != 0:
             return {"answers": [], "error": (p.stderr or "").strip()[-160:]}
         return json.loads(p.stdout.strip().splitlines()[-1])
@@ -287,7 +311,10 @@ def score(answers):
 
 
 def main():
+    global KIN_DEPTH
     gens, K, soup = 80, 60, 20
+    if "--kin" in sys.argv:
+        KIN_DEPTH = int(sys.argv[sys.argv.index("--kin") + 1])
     if "--gens" in sys.argv:
         gens = int(sys.argv[sys.argv.index("--gens") + 1])
     if "--K" in sys.argv:
@@ -322,17 +349,18 @@ def main():
         # --- 1. predation: only foreign code is worth eating ---------------
         gmap = {f: read_genome(f) for f in files}
         energy = {f: gmap[f].get("energy", 0) for f in files}
-        hunts, hunted, refused = 0, set(), 0
+        hunts, hunted, refused_kin, refused_clone = 0, set(), 0, 0
         for f in files:
             g = gmap[f]
             if len(files) < 2 or random.random() >= g.get("diet", 0.0):
                 continue
-            mine = set(g.get("lineage", []))
-            prey = [x for x in files if x != f
-                    and gmap[x]["strategy"] != g["strategy"]
-                    and not (mine & set(gmap[x].get("lineage", [])))]
-            if not prey:
-                refused += 1          # nothing but kin around: hunger unspent
+            strangers = [x for x in files if x != f and not kin(g, gmap[x])]
+            prey = [x for x in strangers if gmap[x]["strategy"] != g["strategy"]]
+            if not prey:              # hunger unspent
+                if strangers:
+                    refused_clone += 1    # unrelated by descent, same code: nothing to gain
+                else:
+                    refused_kin += 1
                 continue
             victim = random.choice(prey)
             share = int(energy[victim] * HUNT_SHARE)
@@ -393,7 +421,8 @@ def main():
         carriers = sum(1 for r in rows if r["strategy"] == best["strategy"])
         rec = {"gen": gen, "maxiter": maxiter, "pop": len(rows),
                "survivors": len(survivors), "dead": len(rows) - len(survivors),
-               "born": born, "hunts": hunts, "refused": refused,
+               "born": born, "hunts": hunts, "refused": refused_kin + refused_clone,
+               "refused_kin": refused_kin, "refused_clone": refused_clone,
                "best_energy": best["energy"], "best_right": best["right"],
                "best_fert": best["fert"], "best_cr": best["g"]["cr"],
                "best_ci": best["g"]["ci"],
@@ -406,7 +435,6 @@ def main():
                "mean_brood": round(sum(r["g"].get("brood", 1) for r in rows) / len(rows), 2),
                "mean_diet": round(sum(r["g"].get("diet", 0) for r in rows) / len(rows), 3),
                "errors": sum(1 for r in rows if r["error"]),
-               "refused": refused,
                "best_strategy": best["strategy"],
                "best_lineage": best["g"].get("lineage", [])[-6:]}
         history.append(rec)
@@ -415,9 +443,9 @@ def main():
             best_ever = rec
         log.write(json.dumps(rec, ensure_ascii=False) + "\n")
         log.flush()
-        print("gen %02d it %3d pop %2d surv %2d born %2d hunt %2d kin-refused %2d | best %d/%d E%3d fert %.2f | "
+        print("gen %02d it %3d pop %2d surv %2d born %2d hunt %2d refused kin %2d clone %2d | best %d/%d E%3d fert %.2f | "
               "mu %.3f eff %.2f brood %.1f diet %.2f | err %d"
-              % (gen, maxiter, rec["pop"], rec["survivors"], born, hunts, refused, best["right"],
+              % (gen, maxiter, rec["pop"], rec["survivors"], born, hunts, refused_kin, refused_clone, best["right"],
                  len(CASES), best["energy"], rec["mean_fert"], rec["mean_mu"],
                  rec["mean_eff"], rec["mean_brood"], rec["mean_diet"], rec["errors"]))
         cur = nxt

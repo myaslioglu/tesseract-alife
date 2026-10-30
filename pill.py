@@ -74,18 +74,73 @@ def init_params(arch, rng, vocab=VOCAB):
     return p
 
 
+def shapes(arch, vocab=VOCAB):
+    """Every tensor a brain of this architecture must carry, and nothing else."""
+    d, h = arch["d"], arch["d"] * arch["mlp"]
+    s = {"tok": (vocab, d), "pos": (SEQLEN, d), "Wu": (d, vocab), "bu": (vocab,)}
+    for l in range(arch["layers"]):
+        s.update({"%d.Wq" % l: (d, d), "%d.Wk" % l: (d, d), "%d.Wv" % l: (d, d),
+                  "%d.Wo" % l: (d, d), "%d.W1" % l: (d, h), "%d.b1" % l: (h,),
+                  "%d.W2" % l: (h, d), "%d.b2" % l: (d,)})
+    return s
+
+
 def arch_ok(p, arch):
-    d = arch["d"]
+    """Exact match: a 2-layer brain is not a 1-layer brain with leftovers."""
     try:
-        if p["tok"].shape[1] != d:
-            return False
-        if ("%d.Wq" % (arch["layers"] - 1)) not in p:
-            return False
-        if p["0.W1"].shape != (d, d * arch["mlp"]):
-            return False
+        want = shapes(arch, p["tok"].shape[0])
+        return set(p) == set(want) and all(p[k].shape == want[k] for k in want)
     except Exception:
         return False
-    return True
+
+
+def morph(p, old, new, rng):
+    """Reshape a brain to a new architecture without forgetting what it knows.
+
+    Growth is function-preserving: an inserted block has Wo = W2 = b2 = 0, so
+    it is the identity on the residual stream until it learns otherwise; new
+    width reads from the stream but writes zeros into it, and Wq is rescaled so
+    QKᵀ/√d keeps its temperature. Nothing is frozen: new output weights get a
+    gradient on the first step, and everything behind them from the second.
+    Shrinking is genuine loss: a removed block or truncated width is cut out.
+    """
+    vocab = p["tok"].shape[0]
+    d0, h0, d1 = old["d"], old["d"] * old["mlp"], new["d"]
+    k = min(d0, d1)
+    q = init_params(new, rng, vocab)                 # fresh tissue for new cells
+
+    def graft(key, src):                             # old weights into the top-left corner
+        a = p[src]
+        cut = tuple(slice(0, min(m, n)) for m, n in zip(a.shape, q[key].shape))
+        q[key][cut] = a[cut]
+
+    for key in ("tok", "pos", "Wu", "bu"):
+        graft(key, key)
+    q["tok"][:, d0:] = 0.0                           # new stream dims start silent
+    q["pos"][:, d0:] = 0.0
+
+    src = list(range(old["layers"]))                 # new layer -> old layer
+    while len(src) < new["layers"]:
+        src.insert(int(rng.integers(0, len(src) + 1)), None)
+    while len(src) > new["layers"]:
+        src.pop(int(rng.integers(0, len(src))))
+
+    for l, s in enumerate(src):
+        if s is None:                                # identity block
+            q["%d.Wo" % l][:] = 0.0
+            q["%d.W2" % l][:] = 0.0
+            q["%d.b2" % l][:] = 0.0
+            continue
+        for name in ("Wq", "Wk", "Wv", "Wo", "W1", "b1", "W2", "b2"):
+            graft("%d.%s" % (l, name), "%d.%s" % (s, name))
+        q["%d.Wq" % l][:k, :k] *= np.sqrt(d1 / d0)   # keep attention temperature
+        q["%d.Wq" % l][:, d0:] = 0.0                 # new query dims score nothing
+        q["%d.Wo" % l][d0:, :] = 0.0                 # new value dims write nothing
+        q["%d.Wo" % l][:, d0:] = 0.0
+        q["%d.W2" % l][h0:, :] = 0.0                 # new hidden units write nothing
+        q["%d.W2" % l][:, d0:] = 0.0
+        q["%d.b2" % l][d0:] = 0.0
+    return q
 
 
 # --------------------------------------------------------------------------
@@ -241,6 +296,6 @@ if __name__ == "__main__":
             arch = {"d": d, "mlp": 2, "layers": layers}
             p = init_params(arch, rng)
             acc0 = accuracy(p, arch, xte, yte)
-            p, h = train_online(p, arch, 400, 0.05, rng)
+            p, h = train_online(p, arch, 800, 0.05, rng)
             print("layers %d d %2d | start %.2f -> held-out %.2f | loss %.3f"
                   % (layers, d, acc0, accuracy(p, arch, xte, yte), h[-1]))

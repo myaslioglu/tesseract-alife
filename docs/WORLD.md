@@ -77,13 +77,16 @@ adopts the victim's code with a digestion error half the time. That is
 horizontal gene transfer: good code can jump between lineages without descent.
 
 Two rules keep it honest. A hunter only eats **foreign** code — the prey must
-carry a different strategy and share no ancestor in its lineage record. If
-everyone around is kin, the hunter goes hungry rather than inbreed. And a hunter
-forages badly in the generation it hunts: its case score is cut to 60%.
+carry a different strategy and share neither parent nor grandparent with the
+hunter (`--kin 2`). If everyone around is kin, the hunter goes hungry rather
+than inbreed. ("No shared ancestor at all" cannot work: the whole tree grows
+from one root, so everyone would be kin.) And a hunter forages badly in the
+generation it hunts: its case score is cut to 60%. Refusals are logged as `kin`
+(no stranger around) or `clone` (strangers, but carrying the same code).
 
-**Selection.** Population is held at an optimum `K` (default 30) by logistic
-selection, not a hard cap: the number of survivors is `K / mean brood`, so the
-next generation lands near `K`. Organisms below the reproduction cost starve
+**Selection.** Population is held near an optimum `K` (default 60) by
+truncation selection: the `K / mean brood` most energetic organisms survive, so
+the next generation lands near `K`. Organisms below the reproduction cost starve
 and are moved to `dead/`.
 
 ## Running it
@@ -96,7 +99,7 @@ python3 fractal.py                              # poster + animation from the lo
 Outputs: `world.jsonl` (per-generation record), `positions.jsonl` (every
 organism's coordinate, every generation), `report.md` (the table),
 `dead/` (corpses), and from the renderer
-`output/mandelbrot_colony.png` + `.gif`.
+`output/mandelbrot_colony.png` + `.gif` (in `output/` next to the code).
 
 ## Mutation operators
 
@@ -117,6 +120,12 @@ Before anything runs:
 
 Anything else raises, the organism scores zero, and it dies of starvation.
 
+The whitelist cannot see size: `c*10**9` is legal arithmetic. So each organism
+runs with a 6 s timeout and a 512 MB address-space limit (`RLIMIT_AS`).
+Overreach is a `MemoryError`; the organism scores zero and starves, like any
+other nonsense. macOS does not enforce `RLIMIT_AS`, so there only the timeout
+holds.
+
 ## What actually happened (80 generations, v6)
 
 * population grew and held: 24 → 59 against `K = 60`, range 24–63
@@ -125,10 +134,25 @@ Anything else raises, the organism scores zero, and it dies of starvation.
   never got past 5/6 in 160 generations of trying
 * `eff` stopped pinning: final distribution 0.36 – 1.09, mean 0.65, continuous
   and interior to the range. No wall, either end
-* predation collapsed on its own: 44 successful hunts against **754 refusals**
-  — hunters found nothing but kin. The colony went clonal (58 of 62 organisms
-  carry the identical strategy), and a predator that refuses to eat its own
-  kind starves in a clone field
+* predation collapsed: 44 successful hunts against **754 refusals**. This was
+  read as "hunters found nothing but kin in a clone field". It was mostly the
+  kin rule: it looked 24 ancestors deep over a tree with one root, so for the
+  first ~24 generations no legal prey existed whatever the code looked like
+
+## After the kinship fix (evolve-1, 80 generations)
+
+Same command, kin = a shared parent or grandparent. A single unseeded run, as v6
+was, so compare shapes rather than exact values.
+
+* **predation fires**: 62 hunts; 4 hunters refused for lack of non-kin, 11 for
+  lack of different code. With the old rule, a re-run of the same code made
+  **zero** hunts in 34 generations
+* **`diet` climbs to 0.40** (from 0.05) — now that prey exists, hunting pays
+  well enough to be selected
+* the task was solved, later: first perfect 6/6 at generation 55; 25 of 80
+  generations carried a perfect solver
+* the colony still goes clonal (48 of 59 carry one strategy at the end), and
+  population held at 17–64 against `K = 60`
 
 ## Known lies
 
@@ -136,11 +160,13 @@ Anything else raises, the organism scores zero, and it dies of starvation.
    `eff`. Data says otherwise: Pearson(fertility, eff) = **−0.04**. No spatial
    sorting at all. Either migration is fast enough to erase local adaptation, or
    the energy surplus is so large that the optimum is flat across the whole
-   occupied range. I have not separated those two.
-2. **Diversity dies early.** `mu` falls to 0.068 and the population becomes a
-   clone army by mid-run. Everything after generation 10 is one codebase
-   competing with itself, which is why predation had nothing left to eat.
-3. **No proof of horizontal transfer mattering.** 44 hunts moved code; none of
+   occupied range — or the payoff is flat near its optimum anyway: at a perfect
+   score on fertility 1.5, ±20% `eff` costs ~0.36 energy, less than the ±0.5
+   rounding of gain and upkeep. I have not separated these.
+2. **Diversity dies early.** `mu` falls and the population becomes a clone army
+   by mid-run (48 of 59 after the fix). Much of what looked like predation
+   starving in the clone field was the kin bug instead (see v6 above).
+3. **No proof of horizontal transfer mattering.** 62 hunts moved code; none of
    them demonstrably changed an outcome.
-4. **`diet` still climbs** to 0.24 with no measured cost beyond the 60% foraging
-   cut. The penalty exists now, but I never showed it binds.
+4. **`diet` climbs** to 0.40 now that prey exists. The 60% foraging cut is real,
+   but I have not shown it binds.

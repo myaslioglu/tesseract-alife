@@ -2,31 +2,46 @@
 # -*- coding: utf-8 -*-
 """Render the Mandelbrot habitat and overlay where the population actually lived.
 
-Reads life/positions.jsonl (written by world.py) and produces:
+Reads positions.jsonl (written by world.py, next to this file) and produces:
   output/mandelbrot_colony.png    poster, two panels
   output/mandelbrot_colony.gif    animation, colony growing along the boundary
 """
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent
-OUT = ROOT.parent / "output"
-POS = json.loads("[" + ",".join((ROOT / "positions.jsonl").read_text().splitlines()) + "]")
+OUT = ROOT / "output"
+POS = []
 
 NAVY = (14, 40, 91)
 GOLD = (184, 125, 55)
 INK = (232, 239, 249)
 MUTE = (147, 169, 198)
 
-FP = "/System/Library/Fonts/Supplemental/Arial.ttf"
-FB = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+FONTS = {False: ["/System/Library/Fonts/Supplemental/Arial.ttf",            # macOS
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",          # Debian, Ubuntu
+                 "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",        # Fedora
+                 "C:/Windows/Fonts/arial.ttf", "DejaVuSans.ttf", "Arial.ttf"],
+         True: ["/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+                "C:/Windows/Fonts/arialbd.ttf", "DejaVuSans-Bold.ttf", "Arial Bold.ttf"]}
 
 
 def font(sz, bold=False):
-    return ImageFont.truetype(FB if bold else FP, sz)
+    for path in FONTS[bold]:
+        try:
+            return ImageFont.truetype(path, sz)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=sz)       # Pillow >= 10.1
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def mandel(cr0, cr1, ci0, ci1, w, h, maxiter=260):
@@ -117,10 +132,11 @@ def poster():
           "the whole set", "where everything is possible, and almost nothing is fertile", 220, gmax, 2)
     panel(img, (820, 96, 1576, 900),
           (cx - span / 2, cx + span / 2, cy - span / 2.55, cy + span / 2.55),
-          pts, "the colony", "the sampled region, 80 generations of drift", 320, gmax, 3)
+          pts, "the colony", "the sampled region, %d generations of drift" % (gmax + 1), 320, gmax, 3)
 
     d = ImageDraw.Draw(img)
-    d.text((24, 28), "HCS world — 80 generations on the Mandelbrot boundary", font=font(30, True), fill=INK)
+    d.text((24, 28), "HCS world — %d generations on the Mandelbrot boundary" % (gmax + 1),
+           font=font(30, True), fill=INK)
     d.text((24, 66), "each dot is an organism; colour runs from first generation (teal) to last (gold)",
            font=font(15), fill=MUTE)
     path = OUT / "mandelbrot_colony.png"
@@ -167,5 +183,10 @@ def animate():
 
 
 if __name__ == "__main__":
+    src = ROOT / "positions.jsonl"
+    if not src.exists():
+        sys.exit("no %s yet: run world.py first" % src.name)
+    POS[:] = [json.loads(line) for line in src.read_text().splitlines() if line.strip()]
+    OUT.mkdir(exist_ok=True)
     poster()
     animate()

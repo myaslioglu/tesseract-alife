@@ -104,7 +104,31 @@ python3 fractal.py                               # render the colony
 python3 spore.py --selftest                      # zero-dependency organism
 ```
 
+## What happened (neural world, 10 generations)
+
+Population 10-14, each organism training 800 steps per generation, measured on
+128 fresh sequences it has never seen.
+
+| gen | best | mean | retention | layers |
+|---|---|---|---|---|
+| 0 | 0.45 | 0.46 | — | 2.0 |
+| 2 | 0.52 | 0.49 | 1.00 | 2.0 |
+| 4 | 0.62 | 0.59 | 1.00 | 2.0 |
+| 6 | 0.68 | 0.68 | 1.00 | 2.0 |
+| 8 | 0.81 | 0.72 | 1.00 | 2.0 |
+| 9 | 0.70 | 0.72 | 1.00 | 2.0 |
+
+Mean accuracy 0.46 → 0.72 across ten generations, best individual 0.81. Each
+generation inherits the trained weights and keeps going — learning accumulates
+down the lineage instead of restarting from random.
+
+**Layers never dropped to 1.** Every surviving organism carried two or more
+attention layers in every generation. One-layer mutants are born, score near
+chance, and starve. The architecture is not decoration; the environment audits
+it every generation.
+
 ## Honest limits
+
 
 Written down rather than hidden, because a benchmark that lies is worse than no
 benchmark:
@@ -117,7 +141,13 @@ benchmark:
 3. **Metabolism does not track habitat** in the expression world
    (Pearson = −0.04). Theory says rich ground selects heavy `eff`; the data
    disagrees and the two candidate explanations are untested.
-4. **Horizontal gene transfer is unproven.** Code moves between lineages; no run
-   has demonstrated that it changed an outcome.
+4. **Horizontal gene transfer is dead on arrival.** Zero hunts in ten
+   generations, and it is my bug: prey is defined as an organism with a
+   *different architecture*. The population converges on one architecture within
+   a generation, so no legal prey ever exists and the predator rule never fires.
+   In the expression world the comparison was against the *code*, which is
+   fine-grained. Fixing this means comparing weights, not architecture shapes.
+5. **The run was cut at generation 10 of 12** by its own process timeout, not by
+   extinction. The trend is real; the last two generations are missing.
 
 MIT licensed.

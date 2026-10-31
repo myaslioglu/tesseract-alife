@@ -2,10 +2,11 @@ __pycache__/
 *.pyc
 pop/
 dead/
-net_pop/
-net_dead/
+net_pop*/
+net_dead*/
+output/
 spores/
 corpus.txt
 *.jsonl
 report.md
-net_report.md
+net_report*.md

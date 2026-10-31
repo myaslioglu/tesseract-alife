@@ -6,18 +6,27 @@ The whole organism in a single file: genome, attention, backprop, memory, and
 the ability to write a mutated copy of itself. Standard library only. No numpy,
 no pip, no build step. Copy this file to any machine with python3 and it lives.
 
-    python3 spore.py --selftest      # verify gradients, then learn
+The genome is the `_G` line below: id, lineage, and the trained brain. Training
+rewrites that line in place; breeding copies this whole file with a mutated
+genome. An empty `_G` is a fresh spore and grows a random brain on first use.
+
+    python3 spore.py                 # who am I, and how good am I
+    python3 spore.py --selftest      # verify gradients, learn, breed, read a child back
     python3 spore.py --train 400     # train this individual, save itself
     python3 spore.py --spawn 3 out/  # write three mutated children
 
 Trade-off, stated up front: pure Python is roughly 50x slower than numpy. The
 model is therefore smaller (d=8). Reach costs speed; that is the deal.
 """
+import base64
 import json
 import math
 import os
 import random
+import re
 import sys
+
+_G = ""
 
 V, L, D, MLP, LAYERS = 8, 8, 8, 1, 2     # vocab, seqlen, width, mlp mult, layers
 LR = 0.05
@@ -129,8 +138,6 @@ def forward(p, x):
         H = [[[c + xv for c, xv in zip(vmat(C[b][i], Wo), X[b][i])] for i in range(L)]
              for b in range(B)]
         Z1 = [[[z for z in vmat(H[b][i], p["%d.W1" % l])] for i in range(L)] for b in range(B)]
-        for b in range(L):
-            pass
         for b in range(B):
             for i in range(L):
                 bb = p["%d.b1" % l]
@@ -321,21 +328,20 @@ def gradcheck(rng, eps=1e-5):
     g = backward(p, cache, dl)
     worst = (0.0, "")
     for k in p:
-        if isinstance(p[k][0], list):
-            cells = [(i, j) for i in range(len(p[k])) for j in range(len(p[k][0]))][:3]
-            for (i, j) in cells:
-                old = p[k][i][j]
-                p[k][i][j] = old + eps
-                lp, _ = forward(p, x)
-                li, _ = softmax_xent(lp, y)
-                p[k][i][j] = old - eps
-                lm, _ = softmax_xent(forward(p, x)[0], y)
-                p[k][i][j] = old
-                num = (li - lm) / (2 * eps)
-                ana = g[k][i][j]
-                err = abs(num - ana) / max(1.0, abs(num) + abs(ana))
-                if err > worst[0]:
-                    worst = (err, "%s[%d][%d]" % (k, i, j))
+        matrix = isinstance(p[k][0], list)
+        rows, grows = (p[k], g[k]) if matrix else ([p[k]], [g[k]])   # a bias is one row
+        for (i, j) in [(i, j) for i in range(len(rows)) for j in range(len(rows[0]))][:3]:
+            old = rows[i][j]
+            rows[i][j] = old + eps
+            li, _ = softmax_xent(forward(p, x)[0], y)
+            rows[i][j] = old - eps
+            lm, _ = softmax_xent(forward(p, x)[0], y)
+            rows[i][j] = old
+            num = (li - lm) / (2 * eps)
+            ana = grows[i][j]
+            err = abs(num - ana) / max(1.0, abs(num) + abs(ana))
+            if err > worst[0]:
+                worst = (err, "%s[%d][%d]" % (k, i, j) if matrix else "%s[%d]" % (k, j))
     return worst
 
 
@@ -352,31 +358,61 @@ def train(p, steps, rng, lr=LR):
     return p, losses
 
 
-def spawn(p, rng, outdir, n=1):
+# ---------------------------------------------------------------- self
+GENE = re.compile(r'^_G = "(.*)"$', re.M)
+
+
+def read_self(path=None):
+    """This file's source, and the genome written inside it (None for a fresh spore)."""
+    with open(path or __file__, encoding="utf-8") as fh:
+        src = fh.read()
+    blob = GENE.search(src).group(1)
+    return src, (json.loads(base64.b64decode(blob)) if blob else None)
+
+
+def write_self(path, src, g):
+    """Write `src` to `path` with `g` as its genome: a save, or a birth."""
+    blob = base64.b64encode(json.dumps(g).encode()).decode()
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(GENE.sub('_G = "%s"' % blob, src, count=1))
+
+
+def newborn(rng):
+    return {"id": "s000-root", "gen": 0, "parent": None, "lineage": ["s000-root"],
+            "steps": 0, "params": init_params(rng)}
+
+
+def spawn(g, src, rng, outdir, n=1):
+    """Write n children: this very file, carrying a mutated copy of my genome."""
     os.makedirs(outdir, exist_ok=True)
     made = []
     for _ in range(n):
-        child = json.loads(json.dumps(p))
-        for k in child:
-            if isinstance(child[k][0], list):
-                for i in range(len(child[k])):
-                    for j in range(len(child[k][i])):
+        child = json.loads(json.dumps(g))
+        p = child["params"]
+        for k in p:
+            if isinstance(p[k][0], list):
+                for i in range(len(p[k])):
+                    for j in range(len(p[k][i])):
                         if rng.random() < 0.15:
-                            child[k][i][j] += rng.gauss(0, 0.02)
+                            p[k][i][j] += rng.gauss(0, 0.02)
             else:
-                for i in range(len(child[k])):
+                for i in range(len(p[k])):
                     if rng.random() < 0.15:
-                        child[k][i] += rng.gauss(0, 0.02)
-        name = os.path.join(outdir, "spore-%04x.json" % rng.randrange(0xFFFF))
-        with open(name, "w") as fh:
-            json.dump(child, fh)
+                        p[k][i] += rng.gauss(0, 0.02)
+        child["gen"] = g["gen"] + 1
+        child["parent"] = g["id"]
+        child["id"] = "s%03d-%06x" % (child["gen"], rng.getrandbits(24))
+        child["lineage"] = (g["lineage"] + [child["id"]])[-24:]
+        name = os.path.join(outdir, child["id"] + ".py")
+        write_self(name, src, child)
         made.append(name)
     return made
 
 
 if __name__ == "__main__":
-    rng = random.Random(7)
+    src, g = read_self()
     if "--selftest" in sys.argv:
+        rng = random.Random(7)
         err, where = gradcheck(rng)
         print("gradcheck worst relative error: %.2e at %s" % (err, where))
         xte, yte = make_batch(200, rng)
@@ -388,14 +424,29 @@ if __name__ == "__main__":
         dt = time.time() - t
         print("after 300 steps: accuracy %.2f  loss %.2f  (%.1f ms/step)"
               % (accuracy(p, xte, yte), losses[-1], 1000 * dt / 300))
-        print("spawned:", spawn(p, rng, "spores", 2))
+        kids = spawn(dict(newborn(rng), params=p, steps=300), src, rng, "spores", 2)
+        _, back = read_self(kids[0])
+        print("spawned:", kids)
+        print("child reads its own genome: %s, gen %d, parent %s, accuracy %.2f"
+              % (back["id"], back["gen"], back["parent"], accuracy(back["params"], xte, yte)))
         sys.exit(0)
 
+    rng = random.Random()
+    g = g or newborn(rng)
     if "--train" in sys.argv:
         n = int(sys.argv[sys.argv.index("--train") + 1])
-        p = init_params(rng)
-        p, losses = train(p, n, rng)
-        with open("spore_self.json", "w") as fh:
-            json.dump(p, fh)
-        print("trained %d steps, loss %.3f, wrote spore_self.json" % (n, losses[-1]))
+        g["params"], losses = train(g["params"], n, rng)
+        g["steps"] += n
+        write_self(__file__, src, g)
+        print("%s trained %d steps (%d in total), loss %.3f, saved into itself"
+              % (g["id"], n, g["steps"], losses[-1]))
         sys.exit(0)
+
+    if "--spawn" in sys.argv:
+        i = sys.argv.index("--spawn")
+        print(json.dumps({"children": spawn(g, src, rng, sys.argv[i + 2], int(sys.argv[i + 1]))}))
+        sys.exit(0)
+
+    xte, yte = make_batch(200, rng)
+    print("%s, generation %d, %d steps trained, held-out accuracy %.2f"
+          % (g["id"], g["gen"], g["steps"], accuracy(g["params"], xte, yte)))

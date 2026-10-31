@@ -21,6 +21,8 @@ task is sampled from them. Organisms never get a socket — a mutated child coul
 otherwise send your files anywhere, and nothing about this experiment needs it.
 
 Usage: python3 world_net.py --gens 25 --K 12 --net
+       python3 world_net.py --control train    # one brain, no evolution: the baseline
+       python3 world_net.py --control drift    # same world, survivors drawn by lottery
 """
 import base64
 import io
@@ -37,10 +39,6 @@ import numpy as np
 import pill
 
 ROOT = Path(__file__).resolve().parent
-POP = ROOT / "net_pop"
-DEAD = ROOT / "net_dead"
-LOG = ROOT / "net_world.jsonl"
-REPORT = ROOT / "net_report.md"
 CORPUS = ROOT / "corpus.txt"
 
 COST = 5
@@ -50,6 +48,8 @@ HUNT_COST = 4
 HUNT_SHARE = 0.45
 MAXITER_0 = 60
 MAXITER_STEP = 3
+KIN_DEPTH = 2      # kin = share a parent or grandparent; the whole tree is one family
+FOREIGN = 0.10     # relative weight distance; siblings ~0.06, second cousins ~0.12
 
 SEED = {
     "id": "n000-root",
@@ -165,7 +165,7 @@ def mutate(g, rng):
         arch = {"d": int(arch["d"]), "mlp": int(arch["mlp"]),
                 "layers": int(arch["layers"]), "lr": float(arch["lr"])}
         if not pill.arch_ok(p, arch):
-            p = pill.init_params(arch, rng)          # new brain, from scratch
+            p = pill.morph(p, g["arch"], arch, rng)  # reshaped, not wiped
     arch["lr"] = float(np.clip(arch["lr"] * np.exp(rng.normal(0, 0.10)), 0.005, 0.12))
 
     sigma = 0.006 * (1.0 + g["mu"])
@@ -190,8 +190,26 @@ def mutate(g, rng):
     return g
 
 
-def write_child(parent, energy, outdir, rng):
-    child = mutate({k: (v if not isinstance(v, list) else list(v)) for k, v in parent.items()}, rng)
+def kin(a, b):
+    """Share an ancestor within KIN_DEPTH generations, self included."""
+    n = KIN_DEPTH + 1
+    return bool(set(a.get("lineage", [])[-n:]) & set(b.get("lineage", [])[-n:]))
+
+
+def brain_distance(pa, pb):
+    """Relative L2 distance between two brains; different shapes are infinitely far."""
+    if set(pa) != set(pb) or any(pa[k].shape != pb[k].shape for k in pa):
+        return float("inf")
+    diff = np.sqrt(sum(float(((pa[k] - pb[k]) ** 2).sum()) for k in pa))
+    na = np.sqrt(sum(float((v * v).sum()) for v in pa.values()))
+    nb = np.sqrt(sum(float((v * v).sum()) for v in pb.values()))
+    return diff / (0.5 * (na + nb) + 1e-12)
+
+
+def write_child(parent, energy, outdir, rng, mutant=True):
+    child = {k: (v if not isinstance(v, list) else list(v)) for k, v in parent.items()}
+    if mutant:
+        child = mutate(child, rng)
     child["gen"] = parent["gen"] + 1
     child["parent"] = parent["id"]
     child["energy"] = max(2, energy)
@@ -245,7 +263,8 @@ def live(g, rng, text, steps, vocab):
 
 
 def main():
-    gens, K, pop0, steps = 25, 12, 10, 800
+    global KIN_DEPTH, FOREIGN
+    gens, K, pop0, steps, seed, control = 25, 12, 10, 800, 7, None
     text = None
     if "--gens" in sys.argv:
         gens = int(sys.argv[sys.argv.index("--gens") + 1])
@@ -253,11 +272,27 @@ def main():
         K = int(sys.argv[sys.argv.index("--K") + 1])
     if "--steps" in sys.argv:
         steps = int(sys.argv[sys.argv.index("--steps") + 1])
+    if "--seed" in sys.argv:
+        seed = int(sys.argv[sys.argv.index("--seed") + 1])
+    if "--kin" in sys.argv:
+        KIN_DEPTH = int(sys.argv[sys.argv.index("--kin") + 1])
+    if "--foreign" in sys.argv:
+        FOREIGN = float(sys.argv[sys.argv.index("--foreign") + 1])
+    if "--control" in sys.argv:
+        control = sys.argv[sys.argv.index("--control") + 1]
+        if control not in ("train", "drift"):
+            sys.exit("--control is 'train' (one brain, no evolution) or 'drift' (random survival)")
     if "--net" in sys.argv:
         text = fetch_corpus()
         print("corpus: %s" % ("fetched %d chars" % len(text) if text else "synthetic"))
 
-    rng = np.random.default_rng(7)
+    tag = "-" + control if control else ""
+    POP, DEAD = ROOT / ("net_pop" + tag), ROOT / ("net_dead" + tag)
+    LOG, REPORT = ROOT / ("net_world%s.jsonl" % tag), ROOT / ("net_report%s.md" % tag)
+    if control == "train":
+        pop0 = 1                     # one brain: never mutated, never culled, never hunted
+
+    rng = np.random.default_rng(seed)
     for d in (POP, DEAD):
         if d.exists():
             shutil.rmtree(d)
@@ -271,8 +306,8 @@ def main():
     (cur / "n000-root.json").write_text(json.dumps(root), encoding="utf-8")
     for _ in range(pop0 - 1):
         write_child(root, 12, cur, rng)
-    print("primordial soup: %d brains, %d layers each"
-          % (pop0, root["arch"]["layers"]))
+    print("primordial soup: %d brains, %d layers each%s"
+          % (pop0, root["arch"]["layers"], " — control arm: %s" % control if control else ""))
 
     hist, log = [], open(LOG, "w", encoding="utf-8")
     t0 = time.time()
@@ -287,19 +322,21 @@ def main():
 
         # predation: steal a foreign brain
         gmap = {f: json.loads(f.read_text(encoding="utf-8")) for f in files}
+        brains = {f: decode_weights(gmap[f]["weights"]) for f in files}
         energy = {f: gmap[f].get("energy", 0) for f in files}
-        hunts = refused = 0
+        hunts = refused_kin = refused_clone = 0
         hunted = set()
         for f in files:
             g = gmap[f]
             if len(files) < 2 or rng.random() >= g.get("diet", 0.0):
                 continue
-            mine = set(g.get("lineage", []))
-            prey = [x for x in files if x != f
-                    and not (mine & set(gmap[x].get("lineage", [])))
-                    and gmap[x]["arch"] != g["arch"]]
+            strangers = [x for x in files if x != f and not kin(g, gmap[x])]
+            prey = [x for x in strangers if brain_distance(brains[f], brains[x]) >= FOREIGN]
             if not prey:
-                refused += 1
+                if strangers:
+                    refused_clone += 1        # unrelated by descent, same brain: nothing to gain
+                else:
+                    refused_kin += 1
                 continue
             victim = prey[int(rng.integers(0, len(prey)))]
             share = int(energy[victim] * HUNT_SHARE)
@@ -309,7 +346,7 @@ def main():
             energy[victim] -= share
             g["weights"] = gmap[victim]["weights"]     # the brain is eaten
             g["arch"] = dict(gmap[victim]["arch"])
-            gmap[f] = g
+            brains[f] = brains[victim]
             hunted.add(f)
             hunts += 1
 
@@ -330,7 +367,12 @@ def main():
         rows.sort(key=lambda r: (-r["energy"], -r["acc"]))
         mean_brood = sum(r["g"]["brood"] for r in rows) / len(rows)
         n_surv = max(3, min(len(rows), int(round(K / max(1.0, mean_brood)))))
-        survivors = [r for r in rows if r["energy"] >= COST][:n_surv]
+        if control == "train":
+            survivors = rows
+        elif control == "drift":                    # same world, survival by lottery
+            survivors = [rows[i] for i in rng.permutation(len(rows))][:n_surv]
+        else:
+            survivors = [r for r in rows if r["energy"] >= COST][:n_surv]
         for r in [x for x in rows if x not in survivors]:
             shutil.move(str(r["file"]), str(DEAD / f"{gen:03d}-{r['file'].name}"))
 
@@ -338,31 +380,34 @@ def main():
         nxt.mkdir(exist_ok=True)
         born = 0
         for r in survivors:
-            for _ in range(r["g"]["brood"]):
-                write_child(r["g"], max(2, r["energy"] // (1 + r["g"]["brood"])), nxt, rng)
+            kids = 1 if control == "train" else r["g"]["brood"]
+            for _ in range(kids):
+                write_child(r["g"], max(2, r["energy"] // (1 + kids)), nxt, rng,
+                            mutant=control != "train")
                 born += 1
             shutil.move(str(r["file"]), str(DEAD / f"{gen:03d}-{r['file'].name}"))
 
-        best = rows[0]
+        fittest = rows[0]
         layers = [r["g"]["arch"]["layers"] for r in rows]
-        rec = {"gen": gen, "maxiter": maxiter, "pop": len(rows),
-               "surv": len(survivors), "born": born, "hunts": hunts,
-               "refused": refused,
-               "best_acc": round(best["acc"], 3), "best_ret": round(best["ret"], 3),
+        rec = {"gen": gen, "arm": control or "evolve", "seed": seed, "maxiter": maxiter,
+               "pop": len(rows), "surv": len(survivors), "born": born, "hunts": hunts,
+               "refused_kin": refused_kin, "refused_clone": refused_clone,
+               "top_acc": round(max(r["acc"] for r in rows), 3),
+               "fittest_acc": round(fittest["acc"], 3), "fittest_ret": round(fittest["ret"], 3),
                "mean_acc": round(sum(r["acc"] for r in rows) / len(rows), 3),
                "mean_ret": round(sum(r["ret"] for r in rows) / len(rows), 3),
                "mean_layers": round(sum(layers) / len(layers), 2),
                "two_plus": sum(1 for L in layers if L >= 2),
                "mean_eff": round(sum(r["g"]["eff"] for r in rows) / len(rows), 3),
-               "best_arch": best["g"]["arch"]}
+               "fittest_arch": fittest["g"]["arch"]}
         hist.append(rec)
         log.write(json.dumps(rec) + "\n")
         log.flush()
-        print("gen %02d pop %2d surv %2d born %2d | acc best %.2f mean %.2f | "
-              "ret %.2f | layers %.1f (>=2: %d/%d) | eff %.2f"
-              % (gen, rec["pop"], rec["surv"], born, rec["best_acc"],
-                 rec["mean_acc"], rec["best_ret"], rec["mean_layers"],
-                 rec["two_plus"], rec["pop"], rec["mean_eff"]))
+        print("gen %02d pop %2d surv %2d born %2d hunt %d (kin %d clone %d) | "
+              "acc top %.2f fittest %.2f mean %.2f | ret %.2f | layers %.1f (>=2: %d/%d) | eff %.2f"
+              % (gen, rec["pop"], rec["surv"], born, hunts, refused_kin, refused_clone,
+                 rec["top_acc"], rec["fittest_acc"], rec["mean_acc"], rec["mean_ret"],
+                 rec["mean_layers"], rec["two_plus"], rec["pop"], rec["mean_eff"]))
         cur = nxt
 
     log.close()
@@ -375,14 +420,16 @@ def main():
 
     with open(REPORT, "w", encoding="utf-8") as fh:
         fh.write("# HCS net world — evolving attention, generation by generation\n\n")
-        fh.write("| gen | pop | surv | born | hunts | best acc | mean acc | retention |"
-                 " layers | 2+ layers | eff |\n")
-        fh.write("|---|---|---|---|---|---|---|---|---|---|---|\n")
+        fh.write("arm: **%s**, seed %d, kin depth %d, foreign distance %.2f\n\n"
+                 % (control or "evolve", seed, KIN_DEPTH, FOREIGN))
+        fh.write("| gen | pop | surv | born | hunts | refused kin/clone | top acc | fittest acc |"
+                 " mean acc | retention | layers | 2+ layers | eff |\n")
+        fh.write("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
         for h in hist:
-            fh.write("| %s | %s | %s | %s | %s | %.2f | %.2f | %.2f | %.1f | %d | %.2f |\n" % (
+            fh.write("| %s | %s | %s | %s | %s | %d/%d | %.2f | %.2f | %.2f | %.2f | %.1f | %d | %.2f |\n" % (
                 h["gen"], h["pop"], h["surv"], h["born"], h["hunts"],
-                h["best_acc"], h["mean_acc"], h["mean_ret"], h["mean_layers"],
-                h["two_plus"], h["mean_eff"]))
+                h["refused_kin"], h["refused_clone"], h["top_acc"], h["fittest_acc"],
+                h["mean_acc"], h["mean_ret"], h["mean_layers"], h["two_plus"], h["mean_eff"]))
     return 0
 
 

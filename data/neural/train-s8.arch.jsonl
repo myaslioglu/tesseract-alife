@@ -1,0 +1,12 @@
+{"gen": 0, "id": "n000-root", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 1, "id": "001-b2fc", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 2, "id": "002-74cc", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 3, "id": "003-7a80", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 4, "id": "004-13ac", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 5, "id": "005-553b", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 6, "id": "006-e756", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 7, "id": "007-875b", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 8, "id": "008-24b1", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 9, "id": "009-b2db", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 10, "id": "010-a4fa", "layers": 2, "d": 32, "mlp": 2}
+{"gen": 11, "id": "011-f930", "layers": 2, "d": 32, "mlp": 2}

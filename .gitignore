@@ -10,3 +10,7 @@ corpus.txt
 *.jsonl
 report.md
 net_report*.md
+paper/*.aux
+paper/*.log
+paper/*.out
+!data/**/*.jsonl

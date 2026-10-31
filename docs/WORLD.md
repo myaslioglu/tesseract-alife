@@ -1,15 +1,15 @@
-# HCS world — self-replicating code organisms
+# HCS world: self-replicating code organisms
 
 A small artificial-life system. An organism is a Python file that reads its own
 source, decodes the genome written inside itself, solves the environment's
-challenge to earn energy, and — if it can afford it — **rewrites itself with
+challenge to earn energy, and, if it can afford it, **rewrites itself with
 mutations and writes a child to disk**. The copying happens inside the organism,
-not in the harness.
+not in the world that runs it.
 
 Nothing here can leave its own folder. The only thing mutation is allowed to
 touch is one arithmetic expression, and that expression is checked against an
 AST whitelist before it is ever compiled. A child that edits itself into
-nonsense dies on the spot. That is not a safety wrapper bolted on top — it is
+nonsense dies on the spot. That is not a safety wrapper bolted on top; it is
 the selection pressure.
 
 ---
@@ -25,14 +25,14 @@ the selection pressure.
 ## The genome
 
 Every organism carries a base64 JSON blob on a single line, `_G = "..."`.
-Mutating an organism means rewriting that line — the file rewrites its own
+Mutating an organism means rewriting that line: the file rewrites its own
 source text.
 
 | gene | range | what it does |
 |---|---|---|
 | `strategy` | code ≤ 240 chars | the expression that solves the challenge |
 | `cr`, `ci` | complex plane | the habitat coordinate; fertility is read from it |
-| `mu` | 0.02 – 0.60 | copy fidelity — how often a child is edited |
+| `mu` | 0.02 – 0.60 | copy fidelity: how often a child is edited |
 | `eff` | 0.02 – unbounded | metabolic efficiency: boosts gain, costs upkeep |
 | `brood` | 1 – 3 | children per reproduction, each with a smaller share of energy |
 | `diet` | 0.0 – 1.0 | chance per generation of hunting a neighbour |
@@ -47,7 +47,7 @@ fertility = 0.35 + 2.40 * (escape_iterations / maxiter)
 interior (never escapes) = 0.30        # stable, but nothing happens
 ```
 
-`maxiter` grows by 3 every generation (60 → 297). Points that were frozen
+`maxiter` grows by 3 every generation (from 60 to 297). Points that were frozen
 interior at generation 0 become coastline later, so new territory opens mid-run.
 
 **Energy.**
@@ -70,13 +70,13 @@ solver on poor ground to a lean one. Nothing clamps the gene; the curve does.
 `pts` is 2 per correct case plus a 4-point bonus for a perfect run. The optimum
 of `eff` therefore depends on how good a solver you are and how fertile your
 patch is: in poor ground a lean metabolism wins, in rich ground a heavier one
-does. There is no ramp to a ceiling — but see "Known lies" below.
+does. There is no ramp to a ceiling, but see "Known lies" below.
 
 **Predation.** A hunter pays 4 energy, takes 45% of a neighbour's energy, and
 adopts the victim's code with a digestion error half the time. That is
 horizontal gene transfer: good code can jump between lineages without descent.
 
-Two rules keep it honest. A hunter only eats **foreign** code — the prey must
+Two rules keep it honest. A hunter only eats **foreign** code: the prey must
 carry a different strategy and share neither parent nor grandparent with the
 hunter (`--kin 2`). If everyone around is kin, the hunter goes hungry rather
 than inbreed. ("No shared ancestor at all" cannot work: the whole tree grows
@@ -86,7 +86,7 @@ generation it hunts: its case score is cut to 60%. Refusals are logged as `kin`
 
 **Selection.** Population is held near an optimum `K` (default 60) by
 truncation selection: the `K / mean brood` most energetic organisms survive, so
-the next generation lands near `K`. Organisms below the reproduction cost starve
+the following generation lands near `K`. Organisms below the reproduction cost starve
 and are moved to `dead/`.
 
 ## Running it
@@ -128,7 +128,7 @@ holds.
 
 ## What actually happened (80 generations, v6)
 
-* population grew and held: 24 → 59 against `K = 60`, range 24–63
+* population grew and held: 24 to 59 against `K = 60`, range 24–63
 * **the task was solved**: first perfect 6/6 at generation 10, and 70 of the 80
   generations carried a perfect solver. Under bounded `eff` the same system
   never got past 5/6 in 160 generations of trying
@@ -147,7 +147,7 @@ was, so compare shapes rather than exact values.
 * **predation fires**: 62 hunts; 4 hunters refused for lack of non-kin, 11 for
   lack of different code. With the old rule, a re-run of the same code made
   **zero** hunts in 34 generations
-* **`diet` climbs to 0.40** (from 0.05) — now that prey exists, hunting pays
+* **`diet` climbs to 0.40** (from 0.05): now that prey exists, hunting pays
   well enough to be selected
 * the task was solved, later: first perfect 6/6 at generation 55; 25 of 80
   generations carried a perfect solver
@@ -160,7 +160,7 @@ was, so compare shapes rather than exact values.
    `eff`. Data says otherwise: Pearson(fertility, eff) = **−0.04**. No spatial
    sorting at all. Either migration is fast enough to erase local adaptation, or
    the energy surplus is so large that the optimum is flat across the whole
-   occupied range — or the payoff is flat near its optimum anyway: at a perfect
+   occupied range; or the payoff is flat near its optimum anyway: at a perfect
    score on fertility 1.5, ±20% `eff` costs ~0.36 energy, less than the ±0.5
    rounding of gain and upkeep. I have not separated these.
 2. **Diversity dies early.** `mu` falls and the population becomes a clone army

@@ -136,29 +136,39 @@ within $O(N)$ generations \cite{kingman}, so most pairs remain kin. Re-running
 the original code gave zero hunts in 34 generations of the expression world
 and in 12 of the neural world, and the earlier refusals had been read as a
 sign of clonality. With kinship limited to two generations the neural world
-made ?? hunts per 12-generation run (5 seeds), and an 80-generation expression
-run made 62 hunts while the diet gene rose from 0.05 to 0.40.
+made 5 to 19 hunts per 12-generation run (mean 12.6, five seeds), and an
+80-generation expression run made 62 hunts while the diet gene rose from 0.05
+to 0.40.
 
 \subsection{A layer born without forgetting}
 Before the morph, any change of shape reinitialised the brain, so a mutant
 raced parents with thousands of training steps and starved; a 2$\to$1 layer
 mutation also crashed the simulation, because leftover weights passed the
 shape check. ``Layers never dropped below two'' therefore measured a handicap,
-not a necessity. With the morph, three-layer brains appeared in ?? of 5 runs
-and persisted (seed 7: born in generation 6, three of the twelve newborns at
-the end). On a task that two layers already solve, the third layer looks close
-to neutral.
+not a necessity. With the morph, three-layer brains appeared in two of five
+runs: in one the line was born in generation 6 and three of the twelve
+newborns at the end carry it, in the other it died out. Under selection the
+single one-layer brain that was born died; under random survival one-layer
+brains appeared in three of five runs and one lasted to the last
+generation. On a task that two layers already solve, a third layer looks close
+to neutral, and losing the second is what selection removes.
 
 \subsection{Selection is not yet doing the work}
 Figure~\ref{fig:arms} compares the full world (\emph{evolve}) with the same
 world under random survival (\emph{drift}) and with a single brain trained
-alone, without mutation or selection (\emph{train}). ??
+alone, without mutation or selection (\emph{train}). All three cross 0.95
+mean held-out accuracy in generations 4 to 6 (mean over seeds: evolve 4.4,
+drift 4.6, train 4.0), after 3{,}200 to 4{,}800 SGD steps; at generation 3 they
+stand at $0.82\pm0.11$, $0.83\pm0.10$ and $0.86\pm0.02$. A single brain
+trained alone is as fast as the population. Inherited trained weights carry
+the learning; on this task selection rides along.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{fig_arms.pdf}
-\caption{Mean held-out accuracy of the population per generation, five seeds
-(line: mean; band: $\pm1$ s.d.). K = 12, 800 SGD steps per generation.}
+\caption{Mean held-out accuracy of the population per generation, seeds
+7--11 (line: mean; band: $\pm1$ s.d.); $K=12$, 800 SGD steps per
+generation.}
 \label{fig:arms}
 \end{figure}
 

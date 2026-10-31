@@ -37,8 +37,8 @@ as kin if they shared any ancestor among the last 24. The whole population
 grows from one root, so for 24 generations everyone was everyone's cousin and
 not one hunt could happen. The refusals had been blamed on a clonal
 population. With kin limited to parents and grandparents, the neural world
-makes ?? hunts per run, and an 80-generation expression world makes 62 while
-the hunting gene climbs from 0.05 to 0.40.
+makes 5 to 19 hunts per run (five seeds), and an 80-generation expression
+world makes 62 while the hunting gene climbs from 0.05 to 0.40.
 
 ### 2. A layer born without forgetting
 
@@ -46,7 +46,9 @@ Any change of shape used to wipe the brain, so every mutant raced its trained
 parents from random weights and starved; a mutation from two layers to one crashed the run
 outright. `pill.morph()` now grows a brain without changing one output
 (|Δ logit| < 1e-15): a new block starts as the identity, new width writes
-zeros. Three-layer lineages appear in ?? of 5 runs and persist.
+zeros. Three-layer brains appeared in two of five runs, and in one the line
+lived to the end. Under selection the single one-layer brain that was born
+died; under random survival one lasted to the last generation.
 
 ### 3. Selection is not yet doing the work
 
@@ -54,7 +56,13 @@ zeros. Three-layer lineages appear in ?? of 5 runs and persist.
 
 The full world against two controls: the same world with survivors drawn by
 lottery (**drift**), and one brain trained alone with no mutation and no
-selection (**train**). ??
+selection (**train**). All three cross 0.95 held-out accuracy between
+generations 4 and 6 (mean over five seeds: evolve 4.4, drift 4.6, train 4.0).
+A single brain trained alone is as fast as the population. What carries the
+learning down a lineage is the inherited trained weights; on this task,
+selection rides along. The next experiment follows from it: a task that one
+learner cannot crack alone, because it shifts, splits into niches, or needs
+more compute than one lineage gets.
 
 ## Run it
 

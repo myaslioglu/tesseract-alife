@@ -1,0 +1,23 @@
+{
+  "title": "Tesseract: self-replicating code organisms that evolve their own attention layers",
+  "upload_type": "software",
+  "description": "<p>An artificial-life system in which each organism is a file that carries its own genome: an arithmetic expression, or a small transformer with its weights, architecture and replay memory. Organisms earn energy on a Mandelbrot-set habitat, reproduce with mutation, prey on foreign neighbours, and grow new attention layers through a function-preserving morph. Includes control arms (random survival, a single brain trained alone) and a dependency-free self-replicating organism.</p>",
+  "creators": [
+    {
+      "name": "Yaşlıoğlu, Muhsin Murat",
+      "affiliation": "Istanbul University, School of Business",
+      "orcid": "0000-0003-2464-5439"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "artificial life",
+    "self-replication",
+    "neuroevolution",
+    "transformers",
+    "induction heads",
+    "predation",
+    "kin selection",
+    "Mandelbrot set"
+  ]
+}

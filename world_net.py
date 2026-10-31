@@ -32,6 +32,8 @@ import re
 import shutil
 import sys
 import time
+from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -108,24 +110,56 @@ def fetch_corpus(url="https://www.gutenberg.org/files/1342/1342-0.txt", limit=40
     return None
 
 
+@lru_cache(maxsize=4)
+def letter_stream(text, size=pill.VOCAB):
+    """The text's `size` most frequent letters, lowercased, and where each occurs.
+
+    The text is reduced to a stream of just those letters. Returns the letters
+    (most frequent first), the stream length, and for each letter the sorted
+    positions at which it occurs in the stream. Cached: the corpus is the same
+    string on every call, and recounting 400k characters per batch is slow.
+    """
+    low = text.lower()
+    counts = Counter(c for c in low if c.isalpha())
+    chars = tuple(sorted(counts, key=lambda c: (-counts[c], c))[:size])
+    idx = {c: i for i, c in enumerate(chars)}
+    stream = np.array([idx[c] for c in low if c in idx], dtype=np.int64)
+    where = tuple(np.flatnonzero(stream == v) for v in range(len(chars)))
+    return chars, stream.size, where
+
+
 def make_task(text, n, rng, seqlen=9):
-    """Induction sequences whose token statistics come from real text, if given."""
+    """Induction sequences whose token statistics come from real text, if given.
+
+    Vocabulary: the `pill.VOCAB` (12) most frequent letters of the text,
+    lowercased. Each sequence starts at a random point in the text and reads
+    forward, keeping a letter only the first time it appears, until it holds
+    `seqlen-1` distinct letters. The prefix follows the text's order, but
+    nothing repeats. As in `pill.make_batch`, the query is one of those
+    letters, so it occurs exactly once earlier and the letter after it is the
+    only right answer.
+    """
     if text:
-        chars = [c for c in sorted(set(text)) if c.isalpha()][:12]
-        if len(chars) >= 8:
-            idx = {c: i for i, c in enumerate(chars)}
-            arr = np.array([idx[c] for c in text if c in idx], dtype=np.int64)
-            if arr.size > 4096:
-                x = np.zeros((n, seqlen), dtype=np.int64)
-                y = np.zeros(n, dtype=np.int64)
-                for i in range(n):
-                    j = int(rng.integers(0, arr.size - seqlen - 1))
-                    win = arr[j:j + seqlen - 1].copy()
-                    k = int(rng.integers(0, seqlen - 2))
-                    x[i, :seqlen - 1] = win
-                    x[i, seqlen - 1] = win[k]
-                    y[i] = win[k + 1]
-                return x, y, len(chars)
+        chars, size, where = letter_stream(text)
+        m = seqlen - 1
+        if len(chars) >= m and size > 4096:
+            # starts at or before the m-th latest final occurrence still have m
+            # distinct letters ahead of them; later starts do not
+            last = sorted((int(w[-1]) for w in where), reverse=True)[m - 1]
+            j = rng.integers(0, last + 1, size=n)
+            nxt = np.full((len(chars), n), size, dtype=np.int64)
+            for v, w in enumerate(where):           # first occurrence of v at or after j
+                at = np.searchsorted(w, j)
+                ok = at < w.size
+                nxt[v, ok] = w[at[ok]]
+            prefix = np.argsort(nxt, axis=0, kind="stable")[:m].T   # by first appearance
+            k = rng.integers(0, m - 1, size=n)
+            rows = np.arange(n)
+            x = np.zeros((n, seqlen), dtype=np.int64)
+            x[:, :m] = prefix
+            x[:, m] = prefix[rows, k]
+            y = prefix[rows, k + 1]
+            return x, y, len(chars)
     x, y = pill.make_batch(n, rng)
     return x, y, pill.VOCAB
 
@@ -285,6 +319,8 @@ def main():
     if "--net" in sys.argv:
         text = fetch_corpus()
         print("corpus: %s" % ("fetched %d chars" % len(text) if text else "synthetic"))
+        if text:
+            print("task letters: %s" % "".join(letter_stream(text)[0]))
 
     tag = "-" + control if control else ""
     POP, DEAD = ROOT / ("net_pop" + tag), ROOT / ("net_dead" + tag)

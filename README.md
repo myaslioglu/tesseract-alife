@@ -166,7 +166,9 @@ done
 python3 world.py --gens 80 --K 60 && python3 fractal.py
 ```
 
-Each run writes `net_world*.jsonl` (one record per generation) and a
+The records of every run in the paper are in [data/](data/), and
+`python3 paper/make_figure.py` rebuilds Fig. 1 and the numbers above from them.
+Each new run writes `net_world*.jsonl` (one record per generation) and a
 `net_report*.md` table. A seed fixes every random draw in the neural world,
 though floating-point differences between machines can still nudge a run. The
 expression world is not seeded.

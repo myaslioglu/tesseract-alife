@@ -9,6 +9,14 @@ authors:
     affiliation: "Istanbul University, School of Business"
     email: "murat@yaslioglu.com"
 version: "1.0.0"
+doi: "10.5281/zenodo.23831807"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.23831807"
+    description: "Version 1.0.0, archived at Zenodo"
+  - type: doi
+    value: "10.5281/zenodo.23831806"
+    description: "All versions (concept DOI)"
 date-released: "2026-10-31"
 license: MIT
 repository-code: "https://github.com/myaslioglu/tesseract-alife"

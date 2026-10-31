@@ -7,6 +7,7 @@
 <p align="center"><b>Self-replicating code organisms that evolve their own attention layers.</b></p>
 
 <p align="center">
+  <a href="https://doi.org/10.5281/zenodo.23831807"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23831807.svg" alt="DOI 10.5281/zenodo.23831807"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
   <a href="paper/tesseract.pdf"><img src="https://img.shields.io/badge/paper-PDF-b31b1b.svg" alt="Paper (PDF)"></a>
@@ -203,8 +204,12 @@ world in full.
 
 ## Cite
 
-If you use this code, please cite the software; GitHub's *Cite this
-repository* button reads [CITATION.cff](CITATION.cff).
+If you use this code, please cite the software. Version 1.0.0, the one
+behind the paper, is archived at Zenodo as
+[10.5281/zenodo.23831807](https://doi.org/10.5281/zenodo.23831807); to cite
+every version at once, use
+[10.5281/zenodo.23831806](https://doi.org/10.5281/zenodo.23831806). GitHub's
+*Cite this repository* button reads [CITATION.cff](CITATION.cff).
 
 ```bibtex
 @software{yaslioglu_tesseract_2026,
@@ -212,6 +217,7 @@ repository* button reads [CITATION.cff](CITATION.cff).
   title   = {Tesseract: self-replicating code organisms that evolve their own attention layers},
   year    = {2026},
   version = {1.0.0},
+  doi     = {10.5281/zenodo.23831807},
   url     = {https://github.com/myaslioglu/tesseract-alife}
 }
 ```

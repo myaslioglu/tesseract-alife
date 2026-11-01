@@ -382,6 +382,7 @@ def main():
     tag = "-" + control if control else ""
     POP, DEAD = ROOT / ("net_pop" + tag), ROOT / ("net_dead" + tag)
     LOG, REPORT = ROOT / ("net_world%s.jsonl" % tag), ROOT / ("net_report%s.md" % tag)
+    ORGS, CONFIG = ROOT / ("net_organisms%s.jsonl" % tag), ROOT / ("net_config%s.json" % tag)
     if control == "train":
         pop0 = 1                     # one brain: never mutated, never culled, never hunted
 
@@ -403,13 +404,19 @@ def main():
     (cur / "n000-root.json").write_text(json.dumps(root), encoding="utf-8")
     for _ in range(pop0 - 1):
         write_child(root, 12, cur, rng)
-    print("primordial soup: %d brains, %d layers each%s%s"
+    print("primordial soup: %d brains, the founder has %d layers%s%s"
           % (pop0, root["arch"]["layers"],
              " | control arm: %s" % control if control else "",
              " | eras of %s generations at 1..%d hops" % ("/".join(map(str, eras)), len(eras))
              if eras else ""))
 
+    CONFIG.write_text(json.dumps({
+        "gens": gens, "K": K, "steps": steps, "seed": seed, "control": control, "eras": eras,
+        "momentum": MOMENTUM, "arch_mu": ARCH_MU, "max_layers": MAX_LAYERS,
+        "founder_layers": root["arch"]["layers"], "kin": KIN_DEPTH, "foreign": FOREIGN,
+        "net": text is not None}, indent=1), encoding="utf-8")
     hist, log = [], open(LOG, "w", encoding="utf-8")
+    orgs = open(ORGS, "w", encoding="utf-8")       # every organism, every generation
     t0 = time.time()
 
     for gen in range(gens):
@@ -473,6 +480,16 @@ def main():
             survivors = [rows[i] for i in rng.permutation(len(rows))][:n_surv]
         else:
             survivors = [r for r in rows if r["energy"] >= COST][:n_surv]
+        for r in rows:
+            g = r["g"]
+            orgs.write(json.dumps({
+                "gen": gen, "id": g["id"], "parent": g["parent"], "lineage": g["lineage"][-4:],
+                "d": g["arch"]["d"], "mlp": g["arch"]["mlp"], "layers": g["arch"]["layers"],
+                "lr": round(g["arch"]["lr"], 4), "acc": round(r["acc"], 3),
+                "acc_by_hop": [round(a, 3) for a in r["by_hop"]], "ret": round(r["ret"], 3),
+                "energy": r["energy"], "eff": g["eff"], "brood": g["brood"], "diet": g["diet"],
+                "hunter": r["file"] in hunted, "survived": any(r is x for x in survivors)}) + "\n")
+        orgs.flush()
         for r in [x for x in rows if x not in survivors]:
             shutil.move(str(r["file"]), str(DEAD / f"{gen:03d}-{r['file'].name}"))
 
@@ -520,6 +537,7 @@ def main():
         cur = nxt
 
     log.close()
+    orgs.close()
     print("\n--- %d generations, %.0fs ---" % (len(hist), time.time() - t0))
     if hist:
         first, last = hist[0], hist[-1]

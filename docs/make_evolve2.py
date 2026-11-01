@@ -24,7 +24,9 @@ def jsonl(path):
     return [json.loads(line) for line in open(path)]
 
 
-runs = {arm: [jsonl(p) for p in sorted(DATA.glob("%s-s*.jsonl" % arm))] for arm in ARMS}
+runs = {arm: [jsonl(p) for p in sorted(DATA.glob("%s-s*.jsonl" % arm),
+                                       key=lambda p: int(p.stem.split("-s")[1]))]
+        for arm in ARMS}
 runs = {arm: rs for arm, rs in runs.items() if rs}
 gens = min(len(r) for rs in runs.values() for r in rs)
 hops = [rec["hops"] for rec in next(iter(runs.values()))[0][:gens]]
@@ -93,3 +95,40 @@ fig.tight_layout(pad=0.3)
 out = ROOT / "docs" / "img" / "evolve2.png"
 fig.savefig(out, dpi=220, bbox_inches="tight", pad_inches=0.04)
 print("wrote", out.relative_to(ROOT))
+
+# one population, generation by generation: what it can do, and how deep it is
+SHOW = DATA / "evolve-s8.jsonl"
+if SHOW.exists():
+    r = jsonl(SHOW)[:gens]
+    fig, (ax, bx) = plt.subplots(2, 1, figsize=(5.2, 3.4), sharex=True,
+                                 gridspec_kw={"height_ratios": [1.3, 1]})
+    hop_style = (("#9aa7b8", ":", "1 hop"), ("#c0782f", "--", "2 hops"), ("#1f4e9c", "-", "3 hops"))
+    for k, (color, ls, label) in enumerate(hop_style):
+        ax.plot(g, [rec["acc_by_hop"][k] for rec in r], ls, color=color, lw=1.4, label=label)
+    for e in eras:
+        ax.axvline(e - 0.5, color="0.6", lw=0.6, ls=":")
+        bx.axvline(e - 0.5, color="0.6", lw=0.6, ls=":")
+    for s, e in zip([0] + eras, eras + [gens]):
+        ax.text((s + e - 1) / 2, 1.07, "world asks %d hop%s" % (hops[s], "" if hops[s] == 1 else "s"),
+                ha="center", fontsize=7, color="0.35")
+    ax.set_ylim(0, 1.12)
+    ax.set_ylabel("population accuracy")
+    ax.legend(frameon=False, fontsize=6.5, loc="center left", title="asked:", title_fontsize=6.5)
+    shades = {1: "#e8e1d4", 2: "#c9d3e3", 3: "#8ea6cc", 4: "#4f6fa8", 5: "#26407a", 6: "#111f40"}
+    bottom = np.zeros(gens)
+    for L, color in shades.items():
+        n = np.array([rec["layer_hist"].get(str(L), 0) / rec["pop"] for rec in r])
+        if n.any():
+            bx.bar(g, n, bottom=bottom, color=color, width=0.92, label="%d layer%s" % (L, "" if L == 1 else "s"))
+            bottom += n
+    bx.set_ylim(0, 1)
+    bx.set_ylabel("share of brains")
+    bx.set_xlabel("generation (seed 8)")
+    bx.set_xlim(-0.5, gens - 0.5)
+    bx.legend(frameon=False, fontsize=6, ncol=6, loc="upper center", bbox_to_anchor=(0.5, -0.32))
+    for axis in (ax, bx):
+        axis.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout(pad=0.3)
+    out = ROOT / "docs" / "img" / "evolve2_s8.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight", pad_inches=0.04)
+    print("wrote", out.relative_to(ROOT))

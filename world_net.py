@@ -52,6 +52,10 @@ MAXITER_0 = 60
 MAXITER_STEP = 3
 KIN_DEPTH = 2      # kin = share a parent or grandparent; the whole tree is one family
 FOREIGN = 0.10     # relative weight distance; siblings ~0.06, second cousins ~0.12
+ARCH_MU = 0.02     # chance per birth that the architecture mutates (--arch-mu)
+MAX_LAYERS = 3     # cap on attention blocks (--max-layers)
+MAX_HOPS = pill.MAXHOPS   # deepest era in a hop schedule; accuracy is logged at each depth
+MOMENTUM = 0.0     # SGD momentum inside a life (--momentum); 0 is the paper's learner
 
 SEED = {
     "id": "n000-root",
@@ -164,6 +168,20 @@ def make_task(text, n, rng, seqlen=9):
     return x, y, pill.VOCAB
 
 
+def task(text, n, rng, hops):
+    """The environment's task this generation: `hops`-hop induction in a hop
+    era (--hops-every), otherwise the one-hop task of the paper. Each era asks
+    only its own depth; old eras survive only in what organisms remember."""
+    if hops:
+        x, y = pill.make_hops(n, rng, hops)
+        return x, y, pill.HOPVOCAB
+    return make_task(text, n, rng)
+
+
+def seqlen_for(hops):
+    return pill.HOPLEN if hops else pill.SEQLEN
+
+
 # ---------------------------------------------------------------- habitat
 def escape(cr, ci, maxiter):
     zr = zi = 0.0
@@ -187,11 +205,11 @@ def mutate(g, rng):
     p = decode_weights(g["weights"])
     arch = dict(g["arch"])
 
-    # architecture mutation (rare, and costly: shapes no longer line up)
-    if rng.random() < 0.02:
+    # architecture mutation: rare, and reshaped rather than wiped
+    if rng.random() < ARCH_MU:
         which = rng.choice(["layers", "d", "mlp"])
         if which == "layers":
-            arch["layers"] = max(1, min(3, arch["layers"] + rng.choice([-1, 1])))
+            arch["layers"] = max(1, min(MAX_LAYERS, arch["layers"] + rng.choice([-1, 1])))
         elif which == "d":
             arch["d"] = int(rng.choice([16, 24, 32, 48]))
         else:
@@ -206,7 +224,7 @@ def mutate(g, rng):
     for k in p:
         p[k] = p[k] + rng.normal(0, sigma, p[k].shape)
         if rng.random() < 0.01:                     # occasional hard reset
-            p[k] = pill.init_params(arch, rng)[k]
+            p[k] = pill.init_params(arch, rng, p["tok"].shape[0], p["pos"].shape[0])[k]
 
     g["arch"] = arch
     g["weights"] = encode_weights(p)
@@ -255,15 +273,22 @@ def write_child(parent, energy, outdir, rng, mutant=True):
 
 
 # ---------------------------------------------------------------- training
-def live(g, rng, text, steps, vocab):
-    """One organism's generation: train, then be measured."""
-    arch = g["arch"]
-    p = decode_weights(g["weights"]) if g["weights"] else pill.init_params(arch, rng)
-    if not pill.arch_ok(p, arch):
-        p = pill.init_params(arch, rng)
+def live(g, rng, text, steps, vocab, hops=0):
+    """One organism's generation: train, then be measured.
 
+    With a hop schedule, `hops` is this generation's task depth. Fitness is
+    held-out accuracy at that depth; accuracy at every depth up to MAX_HOPS is
+    measured too, so the log shows what a brain can still do and cannot yet do.
+    """
+    arch = g["arch"]
+    L = seqlen_for(hops)
+    p = decode_weights(g["weights"]) if g["weights"] else pill.init_params(arch, rng, vocab, L)
+    if not pill.arch_ok(p, arch):
+        p = pill.init_params(arch, rng, vocab, L)
+
+    vel = {k: np.zeros_like(v) for k, v in p.items()} if MOMENTUM else None
     for _ in range(steps):
-        xf, yf, _ = make_task(text, 32, rng)
+        xf, yf, _ = task(text, 32, rng, hops)
         mem = g.get("memory") or []
         if mem:
             xm = np.array([m[0] for m in mem], dtype=np.int64)
@@ -278,9 +303,13 @@ def live(g, rng, text, steps, vocab):
         norm = np.sqrt(sum(float((v * v).sum()) for v in grad.values()))
         scale = min(1.0, 1.0 / (norm + 1e-12))
         for k in p:
-            p[k] = p[k] - arch["lr"] * scale * grad[k]
+            if vel is None:
+                p[k] = p[k] - arch["lr"] * scale * grad[k]
+            else:                                   # velocity starts at zero each life
+                vel[k] = MOMENTUM * vel[k] - arch["lr"] * scale * grad[k]
+                p[k] = p[k] + vel[k]
 
-    xh, yh, _ = make_task(text, 128, rng)
+    xh, yh, _ = task(text, 128, rng, hops)
     acc = pill.accuracy(p, arch, xh, yh)
     ret = 0.0
     mem = g.get("memory") or []
@@ -288,18 +317,34 @@ def live(g, rng, text, steps, vocab):
         xm = np.array([m[0] for m in mem], dtype=np.int64)
         ym = np.array([m[1] for m in mem], dtype=np.int64)
         ret = pill.accuracy(p, arch, xm, ym)
+    by_hop = []
+    if hops:
+        for k in range(1, MAX_HOPS + 1):
+            xk, yk = pill.make_hops(128, rng, k)
+            by_hop.append(pill.accuracy(p, arch, xk, yk))
 
     # remember what it just saw, up to 32 exemplars
     mem = (g.get("memory") or [])[-24:] + [[xh[i].tolist(), int(yh[i])] for i in range(8)]
     g["memory"] = mem[-32:]
     g["weights"] = encode_weights(p)
-    return g, acc, ret
+    return g, acc, ret, by_hop
 
 
 def main():
-    global KIN_DEPTH, FOREIGN
+    global KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM
     gens, K, pop0, steps, seed, control = 25, 12, 10, 800, 7, None
+    hops_every, layers0 = 0, None
     text = None
+    if "--hops-every" in sys.argv:        # eras: 1 hop, then 2 after N gens, 3 after 2N
+        hops_every = int(sys.argv[sys.argv.index("--hops-every") + 1])
+    if "--momentum" in sys.argv:
+        MOMENTUM = float(sys.argv[sys.argv.index("--momentum") + 1])
+    if "--arch-mu" in sys.argv:
+        ARCH_MU = float(sys.argv[sys.argv.index("--arch-mu") + 1])
+    if "--max-layers" in sys.argv:
+        MAX_LAYERS = int(sys.argv[sys.argv.index("--max-layers") + 1])
+    if "--layers" in sys.argv:            # the founding brain's depth
+        layers0 = int(sys.argv[sys.argv.index("--layers") + 1])
     if "--gens" in sys.argv:
         gens = int(sys.argv[sys.argv.index("--gens") + 1])
     if "--K" in sys.argv:
@@ -337,20 +382,26 @@ def main():
 
     cur = POP / "gen000"
     cur.mkdir(parents=True)
+    vocab = pill.HOPVOCAB if hops_every else pill.VOCAB
     root = dict(SEED)
-    root["weights"] = encode_weights(pill.init_params(root["arch"], rng))
+    if layers0:
+        root["arch"] = dict(SEED["arch"], layers=layers0)
+    root["weights"] = encode_weights(
+        pill.init_params(root["arch"], rng, vocab, seqlen_for(1 if hops_every else 0)))
     (cur / "n000-root.json").write_text(json.dumps(root), encoding="utf-8")
     for _ in range(pop0 - 1):
         write_child(root, 12, cur, rng)
-    print("primordial soup: %d brains, %d layers each%s"
-          % (pop0, root["arch"]["layers"], " — control arm: %s" % control if control else ""))
+    print("primordial soup: %d brains, %d layers each%s%s"
+          % (pop0, root["arch"]["layers"],
+             " | control arm: %s" % control if control else "",
+             " | task deepens by one hop every %d generations" % hops_every if hops_every else ""))
 
     hist, log = [], open(LOG, "w", encoding="utf-8")
     t0 = time.time()
-    vocab = pill.VOCAB
 
     for gen in range(gens):
         maxiter = MAXITER_0 + gen * MAXITER_STEP
+        hops = min(MAX_HOPS, 1 + gen // hops_every) if hops_every else 0
         files = sorted(cur.glob("*.json"))
         if not files:
             print("EXTINCTION at gen %d" % gen)
@@ -389,7 +440,7 @@ def main():
         rows = []
         for f in files:
             g = gmap[f]
-            g, acc, ret = live(g, rng, text, steps, vocab)
+            g, acc, ret, by_hop = live(g, rng, text, steps, vocab, hops)
             gmap[f] = g
             fert = fertility(g["cr"], g["ci"], maxiter)
             pts = round(acc * 24) + round(ret * 4)
@@ -397,7 +448,7 @@ def main():
                 pts = round(pts * 0.6)          # hunting costs foraging time
             gain = max(0.0, pts * fert * (g["eff"] ** EFF_EXP))
             cost = UPKEEP * (g["eff"] ** 2)
-            rows.append({"file": f, "g": g, "acc": acc, "ret": ret,
+            rows.append({"file": f, "g": g, "acc": acc, "ret": ret, "by_hop": by_hop,
                          "energy": energy[f] + round(gain) - round(cost)})
 
         rows.sort(key=lambda r: (-r["energy"], -r["acc"]))
@@ -425,25 +476,34 @@ def main():
 
         fittest = rows[0]
         layers = [r["g"]["arch"]["layers"] for r in rows]
+        layer_hist = {L: layers.count(L) for L in sorted(set(layers))}
+        by_hop = [round(sum(r["by_hop"][k] for r in rows) / len(rows), 3)
+                  for k in range(MAX_HOPS)] if hops else []
         rec = {"gen": gen, "arm": control or "evolve", "seed": seed, "maxiter": maxiter,
+               "hops": hops,
                "pop": len(rows), "surv": len(survivors), "born": born, "hunts": hunts,
                "refused_kin": refused_kin, "refused_clone": refused_clone,
                "top_acc": round(max(r["acc"] for r in rows), 3),
                "fittest_acc": round(fittest["acc"], 3), "fittest_ret": round(fittest["ret"], 3),
                "mean_acc": round(sum(r["acc"] for r in rows) / len(rows), 3),
                "mean_ret": round(sum(r["ret"] for r in rows) / len(rows), 3),
+               "acc_by_hop": by_hop,
                "mean_layers": round(sum(layers) / len(layers), 2),
+               "max_layers": max(layers),
+               "layer_hist": {str(L): n for L, n in layer_hist.items()},
                "two_plus": sum(1 for L in layers if L >= 2),
                "mean_eff": round(sum(r["g"]["eff"] for r in rows) / len(rows), 3),
                "fittest_arch": fittest["g"]["arch"]}
         hist.append(rec)
         log.write(json.dumps(rec) + "\n")
         log.flush()
-        print("gen %02d pop %2d surv %2d born %2d hunt %d (kin %d clone %d) | "
-              "acc top %.2f fittest %.2f mean %.2f | ret %.2f | layers %.1f (>=2: %d/%d) | eff %.2f"
-              % (gen, rec["pop"], rec["surv"], born, hunts, refused_kin, refused_clone,
-                 rec["top_acc"], rec["fittest_acc"], rec["mean_acc"], rec["mean_ret"],
-                 rec["mean_layers"], rec["two_plus"], rec["pop"], rec["mean_eff"]))
+        depth = ("by hop " + " ".join("%.2f" % a for a in by_hop) + " | ") if hops else ""
+        print("gen %02d%s pop %2d surv %2d born %2d hunt %d (kin %d clone %d) | "
+              "acc top %.2f fittest %.2f mean %.2f | %slayers %.1f %s | eff %.2f"
+              % (gen, " h%d" % hops if hops else "", rec["pop"], rec["surv"], born, hunts,
+                 refused_kin, refused_clone, rec["top_acc"], rec["fittest_acc"], rec["mean_acc"],
+                 depth, rec["mean_layers"],
+                 " ".join("%dx%d" % (n, L) for L, n in layer_hist.items()), rec["mean_eff"]))
         cur = nxt
 
     log.close()
@@ -456,16 +516,21 @@ def main():
 
     with open(REPORT, "w", encoding="utf-8") as fh:
         fh.write("# HCS net world — evolving attention, generation by generation\n\n")
-        fh.write("arm: **%s**, seed %d, kin depth %d, foreign distance %.2f\n\n"
-                 % (control or "evolve", seed, KIN_DEPTH, FOREIGN))
-        fh.write("| gen | pop | surv | born | hunts | refused kin/clone | top acc | fittest acc |"
-                 " mean acc | retention | layers | 2+ layers | eff |\n")
-        fh.write("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+        fh.write("arm: **%s**, seed %d, kin depth %d, foreign distance %.2f, "
+                 "architecture mutation %.2f, max layers %d, momentum %.2f%s\n\n"
+                 % (control or "evolve", seed, KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM,
+                    ", one more hop every %d generations" % hops_every if hops_every else ""))
+        hop_cols = "".join(" acc@%dhop |" % (k + 1) for k in range(MAX_HOPS)) if hops_every else ""
+        fh.write("| gen | hops | pop | surv | born | hunts | refused kin/clone | top acc | fittest acc |"
+                 " mean acc |%s retention | layers | max layers | eff |\n" % hop_cols)
+        fh.write("|---" * (14 + (MAX_HOPS if hops_every else 0)) + "|\n")
         for h in hist:
-            fh.write("| %s | %s | %s | %s | %s | %d/%d | %.2f | %.2f | %.2f | %.2f | %.1f | %d | %.2f |\n" % (
-                h["gen"], h["pop"], h["surv"], h["born"], h["hunts"],
+            hop_vals = "".join(" %.2f |" % a for a in h["acc_by_hop"]) if hops_every else ""
+            fh.write("| %s | %s | %s | %s | %s | %s | %d/%d | %.2f | %.2f | %.2f |%s %.2f | %.1f | %d | %.2f |\n" % (
+                h["gen"], h["hops"] or "-", h["pop"], h["surv"], h["born"], h["hunts"],
                 h["refused_kin"], h["refused_clone"], h["top_acc"], h["fittest_acc"],
-                h["mean_acc"], h["mean_ret"], h["mean_layers"], h["two_plus"], h["mean_eff"]))
+                h["mean_acc"], hop_vals, h["mean_ret"], h["mean_layers"], h["max_layers"],
+                h["mean_eff"]))
     return 0
 
 

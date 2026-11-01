@@ -329,10 +329,12 @@ if __name__ == "__main__":
     import sys
     if "--hops" in sys.argv:
         # does hop depth demand layer depth? each cell: one brain from scratch
-        steps = 8000
+        steps = int(sys.argv[sys.argv.index("--steps") + 1]) if "--steps" in sys.argv else 16000
+        depths = ([int(v) for v in sys.argv[sys.argv.index("--layers") + 1].split(",")]
+                  if "--layers" in sys.argv else [2, 3, 4, 5])
         print("k-hop induction, d=32, %d steps from scratch, held-out accuracy" % steps)
         print("layers | " + " | ".join("%d hop" % k for k in range(1, MAXHOPS + 1)))
-        for layers in (2, 3, 4, 5):
+        for layers in depths:
             cells = []
             for hops in range(1, MAXHOPS + 1):
                 r = np.random.default_rng(0)

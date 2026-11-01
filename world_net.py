@@ -170,7 +170,7 @@ def make_task(text, n, rng, seqlen=9):
 
 def task(text, n, rng, hops):
     """The environment's task this generation: `hops`-hop induction in a hop
-    era (--hops-every), otherwise the one-hop task of the paper. Each era asks
+    era (--eras), otherwise the one-hop task of the paper. Each era asks
     only its own depth; old eras survive only in what organisms remember."""
     if hops:
         x, y = pill.make_hops(n, rng, hops)
@@ -180,6 +180,16 @@ def task(text, n, rng, hops):
 
 def seqlen_for(hops):
     return pill.HOPLEN if hops else pill.SEQLEN
+
+
+def era_at(eras, gen):
+    """Hops asked in generation `gen`: era k lasts eras[k-1] generations, and
+    the last era runs on to the end. 0 means no eras: the paper's task."""
+    for k, length in enumerate(eras, start=1):
+        if gen < length:
+            return k
+        gen -= length
+    return len(eras)
 
 
 # ---------------------------------------------------------------- habitat
@@ -333,10 +343,12 @@ def live(g, rng, text, steps, vocab, hops=0):
 def main():
     global KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM
     gens, K, pop0, steps, seed, control = 25, 12, 10, 800, 7, None
-    hops_every, layers0 = 0, None
+    eras, layers0 = [], None
     text = None
-    if "--hops-every" in sys.argv:        # eras: 1 hop, then 2 after N gens, 3 after 2N
-        hops_every = int(sys.argv[sys.argv.index("--hops-every") + 1])
+    if "--eras" in sys.argv:              # generations of 1 hop, then 2 hops, then 3: e.g. 4,12,16
+        eras = [int(n) for n in sys.argv[sys.argv.index("--eras") + 1].split(",")]
+        if not 1 <= len(eras) <= MAX_HOPS or min(eras) < 1:
+            sys.exit("--eras takes 1 to %d positive era lengths, e.g. 4,12,16" % MAX_HOPS)
     if "--momentum" in sys.argv:
         MOMENTUM = float(sys.argv[sys.argv.index("--momentum") + 1])
     if "--arch-mu" in sys.argv:
@@ -382,26 +394,27 @@ def main():
 
     cur = POP / "gen000"
     cur.mkdir(parents=True)
-    vocab = pill.HOPVOCAB if hops_every else pill.VOCAB
+    vocab = pill.HOPVOCAB if eras else pill.VOCAB
     root = dict(SEED)
     if layers0:
         root["arch"] = dict(SEED["arch"], layers=layers0)
     root["weights"] = encode_weights(
-        pill.init_params(root["arch"], rng, vocab, seqlen_for(1 if hops_every else 0)))
+        pill.init_params(root["arch"], rng, vocab, seqlen_for(1 if eras else 0)))
     (cur / "n000-root.json").write_text(json.dumps(root), encoding="utf-8")
     for _ in range(pop0 - 1):
         write_child(root, 12, cur, rng)
     print("primordial soup: %d brains, %d layers each%s%s"
           % (pop0, root["arch"]["layers"],
              " | control arm: %s" % control if control else "",
-             " | task deepens by one hop every %d generations" % hops_every if hops_every else ""))
+             " | eras of %s generations at 1..%d hops" % ("/".join(map(str, eras)), len(eras))
+             if eras else ""))
 
     hist, log = [], open(LOG, "w", encoding="utf-8")
     t0 = time.time()
 
     for gen in range(gens):
         maxiter = MAXITER_0 + gen * MAXITER_STEP
-        hops = min(MAX_HOPS, 1 + gen // hops_every) if hops_every else 0
+        hops = era_at(eras, gen)
         files = sorted(cur.glob("*.json"))
         if not files:
             print("EXTINCTION at gen %d" % gen)
@@ -519,13 +532,13 @@ def main():
         fh.write("arm: **%s**, seed %d, kin depth %d, foreign distance %.2f, "
                  "architecture mutation %.2f, max layers %d, momentum %.2f%s\n\n"
                  % (control or "evolve", seed, KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM,
-                    ", one more hop every %d generations" % hops_every if hops_every else ""))
-        hop_cols = "".join(" acc@%dhop |" % (k + 1) for k in range(MAX_HOPS)) if hops_every else ""
+                    ", eras of %s generations" % "/".join(map(str, eras)) if eras else ""))
+        hop_cols = "".join(" acc@%dhop |" % (k + 1) for k in range(MAX_HOPS)) if eras else ""
         fh.write("| gen | hops | pop | surv | born | hunts | refused kin/clone | top acc | fittest acc |"
                  " mean acc |%s retention | layers | max layers | eff |\n" % hop_cols)
-        fh.write("|---" * (14 + (MAX_HOPS if hops_every else 0)) + "|\n")
+        fh.write("|---" * (14 + (MAX_HOPS if eras else 0)) + "|\n")
         for h in hist:
-            hop_vals = "".join(" %.2f |" % a for a in h["acc_by_hop"]) if hops_every else ""
+            hop_vals = "".join(" %.2f |" % a for a in h["acc_by_hop"]) if eras else ""
             fh.write("| %s | %s | %s | %s | %s | %s | %d/%d | %.2f | %.2f | %.2f |%s %.2f | %.1f | %d | %.2f |\n" % (
                 h["gen"], h["hops"] or "-", h["pop"], h["surv"], h["born"], h["hunts"],
                 h["refused_kin"], h["refused_clone"], h["top_acc"], h["fittest_acc"],

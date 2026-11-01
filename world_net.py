@@ -56,6 +56,11 @@ ARCH_MU = 0.02     # chance per birth that the architecture mutates (--arch-mu)
 MAX_LAYERS = 3     # cap on attention blocks (--max-layers)
 MAX_HOPS = pill.MAXHOPS   # deepest era in a hop schedule; accuracy is logged at each depth
 MOMENTUM = 0.0     # SGD momentum inside a life (--momentum); 0 is the paper's learner
+RANK = "energy"    # what survival ranks (--rank): energy (the paper), gain (this life's
+                   # net gain, without inherited wealth), score (this life's points only)
+RANKS = {"energy": lambda r: (-r["energy"], -r["acc"]),
+         "gain": lambda r: (-r["gain"], -r["energy"]),
+         "score": lambda r: (-r["pts"], -r["energy"])}
 
 SEED = {
     "id": "n000-root",
@@ -341,7 +346,7 @@ def live(g, rng, text, steps, vocab, hops=0):
 
 
 def main():
-    global KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM
+    global KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM, RANK
     gens, K, pop0, steps, seed, control = 25, 12, 10, 800, 7, None
     eras, layers0 = [], None
     text = None
@@ -349,6 +354,10 @@ def main():
         eras = [int(n) for n in sys.argv[sys.argv.index("--eras") + 1].split(",")]
         if not 1 <= len(eras) <= MAX_HOPS or min(eras) < 1:
             sys.exit("--eras takes 1 to %d positive era lengths, e.g. 4,12,16" % MAX_HOPS)
+    if "--rank" in sys.argv:
+        RANK = sys.argv[sys.argv.index("--rank") + 1]
+        if RANK not in RANKS:
+            sys.exit("--rank is one of: %s" % ", ".join(RANKS))
     if "--momentum" in sys.argv:
         MOMENTUM = float(sys.argv[sys.argv.index("--momentum") + 1])
     if "--arch-mu" in sys.argv:
@@ -412,7 +421,7 @@ def main():
 
     CONFIG.write_text(json.dumps({
         "gens": gens, "K": K, "steps": steps, "seed": seed, "control": control, "eras": eras,
-        "momentum": MOMENTUM, "arch_mu": ARCH_MU, "max_layers": MAX_LAYERS,
+        "momentum": MOMENTUM, "arch_mu": ARCH_MU, "max_layers": MAX_LAYERS, "rank": RANK,
         "founder_layers": root["arch"]["layers"], "kin": KIN_DEPTH, "foreign": FOREIGN,
         "net": text is not None}, indent=1), encoding="utf-8")
     hist, log = [], open(LOG, "w", encoding="utf-8")
@@ -469,9 +478,11 @@ def main():
             gain = max(0.0, pts * fert * (g["eff"] ** EFF_EXP))
             cost = UPKEEP * (g["eff"] ** 2)
             rows.append({"file": f, "g": g, "acc": acc, "ret": ret, "by_hop": by_hop,
-                         "energy": energy[f] + round(gain) - round(cost)})
+                         "energy": energy[f] + round(gain) - round(cost),
+                         "inherited": energy[f], "fert": fert, "gain": round(gain) - round(cost),
+                         "pts": pts})
 
-        rows.sort(key=lambda r: (-r["energy"], -r["acc"]))
+        rows.sort(key=RANKS[RANK])
         mean_brood = sum(r["g"]["brood"] for r in rows) / len(rows)
         n_surv = max(3, min(len(rows), int(round(K / max(1.0, mean_brood)))))
         if control == "train":
@@ -487,7 +498,8 @@ def main():
                 "d": g["arch"]["d"], "mlp": g["arch"]["mlp"], "layers": g["arch"]["layers"],
                 "lr": round(g["arch"]["lr"], 4), "acc": round(r["acc"], 3),
                 "acc_by_hop": [round(a, 3) for a in r["by_hop"]], "ret": round(r["ret"], 3),
-                "energy": r["energy"], "eff": g["eff"], "brood": g["brood"], "diet": g["diet"],
+                "energy": r["energy"], "inherited": r["inherited"], "fert": r["fert"],
+                "gain": r["gain"], "pts": r["pts"], "eff": g["eff"], "brood": g["brood"], "diet": g["diet"],
                 "hunter": r["file"] in hunted, "survived": any(r is x for x in survivors)}) + "\n")
         orgs.flush()
         for r in [x for x in rows if x not in survivors]:
@@ -548,8 +560,8 @@ def main():
     with open(REPORT, "w", encoding="utf-8") as fh:
         fh.write("# HCS net world — evolving attention, generation by generation\n\n")
         fh.write("arm: **%s**, seed %d, kin depth %d, foreign distance %.2f, "
-                 "architecture mutation %.2f, max layers %d, momentum %.2f%s\n\n"
-                 % (control or "evolve", seed, KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM,
+                 "architecture mutation %.2f, max layers %d, momentum %.2f, survival ranks %s%s\n\n"
+                 % (control or "evolve", seed, KIN_DEPTH, FOREIGN, ARCH_MU, MAX_LAYERS, MOMENTUM, RANK,
                     ", eras of %s generations" % "/".join(map(str, eras)) if eras else ""))
         hop_cols = "".join(" acc@%dhop |" % (k + 1) for k in range(MAX_HOPS)) if eras else ""
         fh.write("| gen | hops | pop | surv | born | hunts | refused kin/clone | top acc | fittest acc |"

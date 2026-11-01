@@ -469,7 +469,8 @@ def main():
             gain = max(0.0, pts * fert * (g["eff"] ** EFF_EXP))
             cost = UPKEEP * (g["eff"] ** 2)
             rows.append({"file": f, "g": g, "acc": acc, "ret": ret, "by_hop": by_hop,
-                         "energy": energy[f] + round(gain) - round(cost)})
+                         "energy": energy[f] + round(gain) - round(cost),
+                         "inherited": energy[f], "fert": fert, "gain": round(gain) - round(cost)})
 
         rows.sort(key=lambda r: (-r["energy"], -r["acc"]))
         mean_brood = sum(r["g"]["brood"] for r in rows) / len(rows)
@@ -487,7 +488,8 @@ def main():
                 "d": g["arch"]["d"], "mlp": g["arch"]["mlp"], "layers": g["arch"]["layers"],
                 "lr": round(g["arch"]["lr"], 4), "acc": round(r["acc"], 3),
                 "acc_by_hop": [round(a, 3) for a in r["by_hop"]], "ret": round(r["ret"], 3),
-                "energy": r["energy"], "eff": g["eff"], "brood": g["brood"], "diet": g["diet"],
+                "energy": r["energy"], "inherited": r["inherited"], "fert": r["fert"],
+                "gain": r["gain"], "eff": g["eff"], "brood": g["brood"], "diet": g["diet"],
                 "hunter": r["file"] in hunted, "survived": any(r is x for x in survivors)}) + "\n")
         orgs.flush()
         for r in [x for x in rows if x not in survivors]:

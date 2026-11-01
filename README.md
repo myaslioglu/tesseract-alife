@@ -65,6 +65,32 @@ selection rides along. The next experiment follows from it: a task that one
 learner cannot crack alone, because it shifts, splits into niches, or needs
 more compute than one lineage gets.
 
+## evolve-2: a world that deepens
+
+<p align="center"><img src="docs/img/evolve2_s8.png" width="560" alt="The best of five evolving runs over 30 generations: accuracy at each depth the world asks for, and the share of brains with each number of layers"></p>
+
+In evolve-2 the world asks for one more hop of reasoning every few
+generations: find the node after the query, then the node after that, then
+the one after that. In this setting two hops needed three attention layers and
+three hops needed four, so a brain of the old depth stays at chance.
+
+The run above is the best of five. When the world asked for two hops, the
+population had already drifted to three-layer brains, and eight of ten of them
+cracked it in the same generation; when it asked for three, it did it again
+with four. The other runs temper that picture:
+
+- depth grew just as much under random survival, because the mutation
+  operator alone pushes it up;
+- evolving populations recovered from the step to two hops in two of five
+  runs, random survival in none (one drifting run kept a solver and reached
+  0.76), which five seeds cannot call significant (p = 0.09);
+- in one run, selection lost three near-perfect brains in a row, because
+  survival ranks energy, not accuracy;
+- a single brain born with the right depth beat them all, on an eleventh of
+  the brain lives.
+
+Method, numbers, confounds and statistics: [docs/EVOLVE2.md](docs/EVOLVE2.md).
+
 ## Run it
 
 ```bash
@@ -72,6 +98,8 @@ git clone https://github.com/myaslioglu/tesseract-alife && cd tesseract-alife
 python3 spore.py --selftest                         # no dependencies: gradients, learning, a child
 pip install numpy pillow
 python3 world_net.py --gens 12 --K 12 --steps 800   # evolve attention (about 6 min on one core)
+python3 world_net.py --gens 30 --eras 3,12,15 --momentum 0.9 --arch-mu 0.3 --max-layers 6
+                                                    # evolve-2: a world that deepens (about 40 min)
 python3 world.py --gens 80 --K 60                   # evolve programs on the boundary
 python3 fractal.py                                  # draw the colony into output/
 ```
@@ -176,10 +204,12 @@ expression world is not seeded.
 
 ## Honest limits
 
-1. **Selection is not yet doing the work** on this task; see finding 3.
-   Evolution should matter where one learner cannot get there alone: a task
-   that shifts, competing niches, or a compute budget too small for one
-   lineage.
+1. **Selection is not yet doing the work** on the one-hop task; see finding 3.
+   In a world that deepens (evolve-2), evolving populations recovered from a
+   new era more often than drifting ones (two of five runs against none), but
+   five seeds cannot call that significant (p = 0.09), depth grew as much
+   without selection, and a brain born with the right depth did better than
+   either.
 2. **Small and few.** K = 12, five seeds, one task; the expression-world
    numbers come from single runs. Each organism is scored on 128 sequences, a
    standard error of about ±0.04.

@@ -51,15 +51,51 @@ def make_batch(n, rng, vocab=VOCAB, seqlen=SEQLEN, distract=0):
     return x, y
 
 
+PAIRS = 6
+MAXHOPS = 3
+HOPLEN = 2 * PAIRS + 2          # the pairs, a hop marker, the query
+HOPVOCAB = VOCAB + MAXHOPS      # tokens VOCAB .. VOCAB+2 mark "1, 2, 3 hops"
+
+
+def make_hops(n, rng, hops=1, pairs=PAIRS, vocab=VOCAB):
+    """k-hop induction over a shuffled chain.
+
+    The prefix lists the edges of a path x0 -> x1 -> ... -> x_m as (a, b)
+    pairs in random order; the query is a node x_j with j + k <= m and the
+    answer is x_{j+k}. One hop is the old task in a new coat: find the pair
+    whose first element is the query and copy its second. Every further hop
+    takes the previous answer as a new query, and the pair that answers it can
+    sit anywhere in the list, so no fixed offset helps: each hop is one more
+    lookup that depends on the one before it.
+
+    A marker token (vocab + hops - 1) sits just before the query and says how
+    many hops are asked, so a remembered example from an easier era is never
+    mistaken for a question of this one.
+    """
+    L = 2 * pairs + 2
+    x = np.zeros((n, L), dtype=np.int64)
+    y = np.zeros(n, dtype=np.int64)
+    for i in range(n):
+        chain = rng.permutation(vocab)[:pairs + 1]    # a path, every node distinct
+        for slot, edge in enumerate(rng.permutation(pairs)):
+            x[i, 2 * slot] = chain[edge]
+            x[i, 2 * slot + 1] = chain[edge + 1]
+        j = int(rng.integers(0, pairs - hops + 1))
+        x[i, L - 2] = vocab + hops - 1
+        x[i, L - 1] = chain[j]
+        y[i] = chain[j + hops]
+    return x, y
+
+
 # --------------------------------------------------------------------------
 # parameters
 # --------------------------------------------------------------------------
-def init_params(arch, rng, vocab=VOCAB):
+def init_params(arch, rng, vocab=VOCAB, seqlen=SEQLEN):
     d, mult, L = arch["d"], arch["mlp"], arch["layers"]
     h = d * mult
     s = 1.0 / np.sqrt(d)
     p = {"tok": rng.normal(0, 0.3, (vocab, d)),
-         "pos": rng.normal(0, 0.1, (SEQLEN, d))}
+         "pos": rng.normal(0, 0.1, (seqlen, d))}
     for l in range(L):
         p["%d.Wq" % l] = rng.normal(0, s, (d, d))
         p["%d.Wk" % l] = rng.normal(0, s, (d, d))
@@ -74,10 +110,10 @@ def init_params(arch, rng, vocab=VOCAB):
     return p
 
 
-def shapes(arch, vocab=VOCAB):
+def shapes(arch, vocab=VOCAB, seqlen=SEQLEN):
     """Every tensor a brain of this architecture must carry, and nothing else."""
     d, h = arch["d"], arch["d"] * arch["mlp"]
-    s = {"tok": (vocab, d), "pos": (SEQLEN, d), "Wu": (d, vocab), "bu": (vocab,)}
+    s = {"tok": (vocab, d), "pos": (seqlen, d), "Wu": (d, vocab), "bu": (vocab,)}
     for l in range(arch["layers"]):
         s.update({"%d.Wq" % l: (d, d), "%d.Wk" % l: (d, d), "%d.Wv" % l: (d, d),
                   "%d.Wo" % l: (d, d), "%d.W1" % l: (d, h), "%d.b1" % l: (h,),
@@ -88,7 +124,7 @@ def shapes(arch, vocab=VOCAB):
 def arch_ok(p, arch):
     """Exact match: a 2-layer brain is not a 1-layer brain with leftovers."""
     try:
-        want = shapes(arch, p["tok"].shape[0])
+        want = shapes(arch, p["tok"].shape[0], p["pos"].shape[0])
         return set(p) == set(want) and all(p[k].shape == want[k] for k in want)
     except Exception:
         return False
@@ -107,7 +143,7 @@ def morph(p, old, new, rng):
     vocab = p["tok"].shape[0]
     d0, h0, d1 = old["d"], old["d"] * old["mlp"], new["d"]
     k = min(d0, d1)
-    q = init_params(new, rng, vocab)                 # fresh tissue for new cells
+    q = init_params(new, rng, vocab, p["pos"].shape[0])   # fresh tissue for new cells
 
     def graft(key, src):                             # old weights into the top-left corner
         a = p[src]
@@ -265,13 +301,13 @@ def accuracy(p, arch, x, y):
     return float((logits.argmax(axis=1) == y).mean())
 
 
-def train_online(p, arch, steps, lr, rng, bs=32, momentum=0.9, clip=1.0):
+def train_online(p, arch, steps, lr, rng, bs=32, momentum=0.9, clip=1.0, batch=make_batch):
     """Fresh batch every step: learning, not memorising. Gradients are clipped
     by global norm, without which a 2-layer model diverges to NaN."""
     vel = {k: np.zeros_like(v) for k, v in p.items()}
     hist = []
     for _ in range(steps):
-        x, y = make_batch(bs, rng)
+        x, y = batch(bs, rng)
         logits, cache = forward(p, x, arch["layers"])
         loss, dlogits, _ = softmax_xent(logits, y)
         g = backward(p, cache, dlogits, arch["layers"])
@@ -289,6 +325,28 @@ if __name__ == "__main__":
     err, where = gradcheck(rng)
     print("gradcheck worst relative error: %.3e at %s" % (err, where))
     assert err < 1e-5, "gradients are wrong; fix before training"
+
+    import sys
+    if "--hops" in sys.argv:
+        # does hop depth demand layer depth? each cell: one brain from scratch
+        steps = int(sys.argv[sys.argv.index("--steps") + 1]) if "--steps" in sys.argv else 16000
+        depths = ([int(v) for v in sys.argv[sys.argv.index("--layers") + 1].split(",")]
+                  if "--layers" in sys.argv else [2, 3, 4, 5])
+        print("k-hop induction, d=32, %d steps from scratch, held-out accuracy" % steps)
+        print("layers | " + " | ".join("%d hop" % k for k in range(1, MAXHOPS + 1)))
+        for layers in depths:
+            cells = []
+            for hops in range(1, MAXHOPS + 1):
+                r = np.random.default_rng(0)
+                arch = {"d": 32, "mlp": 2, "layers": layers}
+                p = init_params(arch, r, vocab=HOPVOCAB, seqlen=HOPLEN)
+                xte, yte = make_hops(512, r, hops)
+                p, _ = train_online(p, arch, steps, 0.05, r,
+                                    batch=lambda n, rr: make_hops(n, rr, hops))
+                cells.append("%.2f" % accuracy(p, arch, xte, yte))
+                print("   %d   | " % layers + " | ".join(cells), end="\r", flush=True)
+            print("   %d   | " % layers + " | ".join(cells))
+        sys.exit(0)
 
     xte, yte = make_batch(512, rng)
     for layers in (1, 2):

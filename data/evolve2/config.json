@@ -1,0 +1,14 @@
+{
+ "about": "Settings shared by the twenty runs in this folder (code: commit d82eb7b on the evolve-2 branch). Each file is the per-generation log of one run: <arm>-s<seed>.jsonl.",
+ "command": "python3 world_net.py --gens 30 --K 12 --steps 800 --seed <seed> --eras 3,12,15 --momentum 0.9 --arch-mu 0.3 --max-layers 6 <arm flags>",
+ "seeds": [7, 8, 9, 10, 11],
+ "arms": {
+  "evolve": "",
+  "drift": "--control drift",
+  "train2": "--control train --layers 2",
+  "train4": "--control train --layers 4"
+ },
+ "gens": 30, "K": 12, "steps": 800, "eras": [3, 12, 15], "momentum": 0.9,
+ "arch_mu": 0.3, "max_layers": 6, "kin": 2, "foreign": 0.1,
+ "per_organism_logs": false
+}

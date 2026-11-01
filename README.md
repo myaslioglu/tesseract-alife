@@ -67,22 +67,29 @@ more compute than one lineage gets.
 
 ## evolve-2: a world that deepens
 
-<p align="center"><img src="docs/img/evolve2_s8.png" width="560" alt="One population over 30 generations: accuracy at each depth the world asks for, and the share of brains with each number of layers"></p>
+<p align="center"><img src="docs/img/evolve2_s8.png" width="560" alt="The best of five evolving runs over 30 generations: accuracy at each depth the world asks for, and the share of brains with each number of layers"></p>
 
 In evolve-2 the world asks for one more hop of reasoning every few
 generations: find the node after the query, then the node after that, then
-the one after that. k hops need k + 1 attention layers. In the run above the
-population answered by growing its brains. Two layers became three when the
-world asked for two hops, and three became four when it asked for three. Each
-time, one deeper lineage cracked the task and swept the population within one
-or two generations.
+the one after that. In this setting two hops needed three attention layers and
+three hops needed four, so a brain of the old depth stays at chance.
 
-That happened in two of five runs, and the full climb to four layers in one.
-Random survival with the same mutations never swept, and a brain of the old
-depth never left chance. A single brain born with the right depth did better
-still: evolution here finds depth it was not told about, it does not beat
-being told. Method, numbers, statistics and limits:
-[docs/EVOLVE2.md](docs/EVOLVE2.md).
+The run above is the best of five. When the world asked for two hops, the
+population had already drifted to three-layer brains, and eight of ten of them
+cracked it in the same generation; when it asked for three, it did it again
+with four. The other runs temper that picture:
+
+- depth grew just as much under random survival, because the mutation
+  operator alone pushes it up;
+- evolving populations recovered from the step to two hops in two of five
+  runs, random survival in none (one drifting run kept a solver and reached
+  0.76), which five seeds cannot call significant (p = 0.09);
+- in one run, selection lost three near-perfect brains in a row, because
+  survival ranks energy, not accuracy;
+- a single brain born with the right depth beat them all, on an eleventh of
+  the brain lives.
+
+Method, numbers, confounds and statistics: [docs/EVOLVE2.md](docs/EVOLVE2.md).
 
 ## Run it
 
@@ -198,10 +205,11 @@ expression world is not seeded.
 ## Honest limits
 
 1. **Selection is not yet doing the work** on the one-hop task; see finding 3.
-   In a world that deepens (evolve-2) it does some: populations grew the
-   depth each new era needed in two of five runs, which random survival never
-   did. Five seeds are too few to call that significant (p = 0.09), and a
-   brain born with the right depth still did better.
+   In a world that deepens (evolve-2), evolving populations recovered from a
+   new era more often than drifting ones (two of five runs against none), but
+   five seeds cannot call that significant (p = 0.09), depth grew as much
+   without selection, and a brain born with the right depth did better than
+   either.
 2. **Small and few.** K = 12, five seeds, one task; the expression-world
    numbers come from single runs. Each organism is scored on 128 sequences, a
    standard error of about ±0.04.

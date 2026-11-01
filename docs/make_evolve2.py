@@ -72,12 +72,9 @@ for arm, (color, ls, label) in ARMS.items():
         continue
     for axis, key in ((ax, "mean_acc"), (bx, "mean_layers")):
         a = series(runs[arm], key)
-        m = a.mean(0)
-        if len(a) > 1:
-            sd = a.std(0, ddof=1)
-            lo, hi = (np.clip(m - sd, 0, 1), np.clip(m + sd, 0, 1)) if key == "mean_acc" else (m - sd, m + sd)
-            axis.fill_between(g, lo, hi, color=color, alpha=0.13, lw=0)
-        axis.plot(g, m, ls, color=color, lw=1.3, label=label)
+        for row in a:                                 # every seed: the outcomes are bimodal
+            axis.plot(g, row, "-", color=color, lw=0.5, alpha=0.35)
+        axis.plot(g, a.mean(0), ls, color=color, lw=1.4, label=label + " (mean)")
 for axis in (ax, bx):
     for e in eras:
         axis.axvline(e - 0.5, color="0.6", lw=0.6, ls=":")
@@ -87,11 +84,13 @@ for s, e in zip([0] + eras, eras + [gens]):
             ha="center", fontsize=7, color="0.35")
 ax.set_ylim(0, 1.12)
 ax.set_ylabel("accuracy, this era")
-ax.legend(frameon=False, fontsize=6.5, loc="lower left", ncol=2)
 bx.set_ylabel("mean layers")
-bx.set_xlabel("generation (800 SGD steps each)")
+bx.set_xlabel("generation (800 SGD steps each); thin lines: single seeds")
 bx.set_xlim(0, gens - 1)
 fig.tight_layout(pad=0.3)
+handles, labels = ax.get_legend_handles_labels()
+fig.legend(handles, labels, frameon=False, fontsize=6.5, ncol=2, loc="upper center",
+           bbox_to_anchor=(0.5, 0.0))
 out = ROOT / "docs" / "img" / "evolve2.png"
 fig.savefig(out, dpi=220, bbox_inches="tight", pad_inches=0.04)
 print("wrote", out.relative_to(ROOT))
@@ -123,7 +122,7 @@ if SHOW.exists():
             bottom += n
     bx.set_ylim(0, 1)
     bx.set_ylabel("share of brains")
-    bx.set_xlabel("generation (seed 8)")
+    bx.set_xlabel("generation (seed 8, the best of five evolving runs)")
     bx.set_xlim(-0.5, gens - 0.5)
     bx.legend(frameon=False, fontsize=6, ncol=6, loc="upper center", bbox_to_anchor=(0.5, -0.32))
     for axis in (ax, bx):
